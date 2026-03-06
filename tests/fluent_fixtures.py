@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -193,7 +193,7 @@ monkeypatch = pytest.MonkeyPatch()
 
 
 def disable_datamodel_cache(globals):
-    monkeypatch.setattr(pyfluent, "DATAMODEL_USE_STATE_CACHE", False)
+    monkeypatch.setattr(pyfluent.config, "datamodel_use_state_cache", False)
 
 
 def display_names_as_keys_in_cache(globals):

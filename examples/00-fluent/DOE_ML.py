@@ -1,4 +1,17 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# /// script
+# dependencies = [
+#   "ansys-fluent-core",
+#   "matplotlib",
+#   "numpy",
+#   "pandas",
+#   "plotly",
+#   "scikit-learn",
+#   "seaborn",
+#   "tensorflow",
+# ]
+# ///
+
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -32,7 +45,7 @@ Design of Experiments and Machine Learning model building
 #
 # Water enters a Mixing Elbow from two Inlets; Hot (313 K) and Cold (293 K) and exits
 # from Outlet. Using PyFluent in the background, this example runs Design of Experiments
-# with Cold Inlet Velocity and Hot Inlet Velocity as Input Parameters and Outlet
+# (DOE) with Cold Inlet Velocity and Hot Inlet Velocity as Input Parameters and Outlet
 # Temperature as an Output Parameter.
 #
 # Results can be visualized using a Response Surface. Finally, Supervised Machine
@@ -49,6 +62,7 @@ Design of Experiments and Machine Learning model building
 
 # flake8: noqa: E402
 
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -66,16 +80,11 @@ from ansys.fluent.core import examples
 ###########################################################################
 # Specifying save path
 # ====================
-# * save_path can be specified as Path("E:/", "pyfluent-examples-tests") or
-# * Path("E:/pyfluent-examples-tests") in a Windows machine for example,  or
-# * Path("~/pyfluent-examples-tests") in Linux.
-
-save_path = Path(pyfluent.EXAMPLES_PATH)
 
 import_filename = examples.download_file(
     "elbow.cas.h5",
     "pyfluent/examples/DOE-ML-Mixing-Elbow",
-    save_path=save_path,
+    save_path=os.getcwd(),
 )
 
 #######################
@@ -86,48 +95,49 @@ import_filename = examples.download_file(
 # Launch Fluent session with solver mode and print Fluent version
 # ===============================================================
 
-solver = pyfluent.launch_fluent(
+solver_session = pyfluent.launch_fluent(
     precision="double",
-    processor_count=2,
-    version="3d",
+    processor_count=4,
 )
-print(solver.get_fluent_version())
+print(solver_session.get_fluent_version())
 
 
 #############################################################################
 # Read case
 # =========
 
-solver.settings.file.read_case(file_name=import_filename)
+solver_session.settings.file.read_case(file_name=import_filename)
 
 ##############################################################################################
 # Design of Experiments
 # =====================
-# * Define Manual DOE as numpy arrays
-# * Run cases in sequence
-# * Populate results (Mass Weighted Average of Temperature at Outlet) in resArr
 
+# Specify inlet velocities for the cold and hot streams.
+# Each pair of (coldVel, hotVel) will be used to run one Fluent case.
 coldVelArr = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
-hotVelArr = np.array([0.8, 1, 1.2, 1.4, 1.6, 1.8, 2.0])
-resArr = np.zeros((coldVelArr.shape[0], hotVelArr.shape[0]))
+hotVelArr = np.array([0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0])
+
+# Allocate a results array. Entry (i, j) will hold the Mass‑Weighted
+# Average Temperature at the outlet for coldVelArr[i] and hotVelArr[j].
+resArr = np.zeros((coldVelArr.size, hotVelArr.size))
 
 for idx1, coldVel in np.ndenumerate(coldVelArr):
     for idx2, hotVel in np.ndenumerate(hotVelArr):
-        cold_inlet = solver.settings.setup.boundary_conditions.velocity_inlet[
+        cold_inlet = solver_session.settings.setup.boundary_conditions.velocity_inlet[
             "cold-inlet"
         ]
         cold_inlet.momentum.velocity.value = coldVel
 
-        hot_inlet = solver.settings.setup.boundary_conditions.velocity_inlet[
+        hot_inlet = solver_session.settings.setup.boundary_conditions.velocity_inlet[
             "hot-inlet"
         ]
         hot_inlet.momentum.velocity.value = hotVel
 
-        solver.settings.solution.initialization.initialization_type = "standard"
-        solver.settings.solution.initialization.standard_initialize()
-        solver.settings.solution.run_calculation.iterate(iter_count=200)
+        solver_session.settings.solution.initialization.initialization_type = "standard"
+        solver_session.settings.solution.initialization.standard_initialize()
+        solver_session.settings.solution.run_calculation.iterate(iter_count=200)
 
-        res_tui = solver.scheme.exec(
+        res_tui = solver_session.scheme.exec(
             (
                 "(ti-menu-load-string "
                 '"/report/surface-integrals/mass-weighted-avg outlet () '
@@ -141,7 +151,7 @@ for idx1, coldVel in np.ndenumerate(coldVelArr):
 # Close the session
 # =================
 
-solver.exit()
+solver_session.exit()
 
 ####################################
 # Plot Response Surface using Plotly
@@ -240,12 +250,12 @@ y_test = np.ravel(y_test.T)
 # * Prediction on Unseen/Test Data (scikit-learn)
 # * Parity Plot (Matplotlib and Seaborn)
 
-# from pprint import pprint
-
-# from sklearn.ensemble import RandomForestRegressor
-# from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from sklearn.model_selection import RepeatedKFold, cross_val_score
+
+# optionally chose which model to use
+# from sklearn.ensemble import RandomForestRegressor
+# from sklearn.linear_model import LinearRegression
 from xgboost import XGBRegressor
 
 np.set_printoptions(precision=2)
@@ -277,8 +287,6 @@ def fit_and_predict(model):
     print(
         "\n\nPredictions - Ground Truth (Kelvin): ", (test_predictions - y_test), "\n"
     )
-    #    print("\n\nModel Parameters:")
-    #    pprint(model.get_params())
 
     com_train_set = train_set
     com_test_set = test_set
@@ -298,7 +306,9 @@ def fit_and_predict(model):
 
     df_combined = pd.concat([com_train_set, com_test_set])
 
-    df_combined.to_csv("PyFluent_Output.csv", header=True, index=False)
+    df_combined.to_csv(
+        os.path.join(os.getcwd(), "PyFluent_Output.csv"), header=True, index=False
+    )
 
     fig = plt.figure(figsize=(12, 5))
 

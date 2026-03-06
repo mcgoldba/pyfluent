@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -38,17 +38,21 @@ Examples
 import inspect
 import logging
 import os
+import tempfile
+import time
 from typing import Any, Dict
 
-from ansys.fluent.core.fluent_connection import FluentConnection
+from ansys.fluent.core.fluent_connection import FluentConnection, _get_max_c_int_limit
 from ansys.fluent.core.launcher.launch_options import (
     Dimension,
     FluentLinuxGraphicsDriver,
     FluentMode,
     FluentWindowsGraphicsDriver,
     Precision,
+    UIMode,
     _get_argvals_and_session,
 )
+from ansys.fluent.core.session import _parse_server_info_file
 from ansys.fluent.core.session_meshing import Meshing
 from ansys.fluent.core.session_pure_meshing import PureMeshing
 from ansys.fluent.core.session_solver import Solver
@@ -68,11 +72,12 @@ class PIMLauncher:
     def __init__(
         self,
         mode: FluentMode | str | None = None,
+        ui_mode: UIMode | str | None = None,
         graphics_driver: (
             FluentWindowsGraphicsDriver | FluentLinuxGraphicsDriver | str | None
         ) = None,
         product_version: FluentVersion | str | float | int | None = None,
-        dimension: Dimension | int | None = None,
+        dimension: Dimension | int = Dimension.THREE,
         precision: Precision | str | None = None,
         processor_count: int | None = None,
         start_timeout: int = 60,
@@ -90,6 +95,9 @@ class PIMLauncher:
         ----------
         mode : FluentMode
             Specifies the launch mode of Fluent for targeting a specific session type.
+        ui_mode : UIMode or str, optional
+            Defines the user interface mode for Fluent. Accepts either a ``UIMode`` value
+            or a corresponding string such as ``"no_gui"``, ``"hidden_gui"``, or ``"gui"``.
         graphics_driver : FluentWindowsGraphicsDriver or FluentLinuxGraphicsDriver
             Specifies the graphics driver for Fluent. Options are from the ``FluentWindowsGraphicsDriver`` enum
             (for Windows) or the ``FluentLinuxGraphicsDriver`` enum (for Linux).
@@ -128,8 +136,8 @@ class PIMLauncher:
 
         Returns
         -------
-        Union[Meshing, PureMeshing, Solver, SolverIcing, dict]
-            Session object or configuration dictionary if ``dry_run`` is True.
+        Union[Meshing, PureMeshing, Solver, SolverIcing, SolverAero]
+            Session object.
 
         Raises
         ------
@@ -170,7 +178,9 @@ class PIMLauncher:
                 FluentVersion(self.argvals["product_version"]).number
             )
         else:
-            fluent_product_version = None
+            fluent_product_version = str(
+                FluentVersion(FluentVersion.current_release()).number
+            )
 
         return launch_remote_fluent(
             session_cls=self.new_session,
@@ -184,13 +194,61 @@ class PIMLauncher:
         )
 
 
+def get_ip_port_password(
+    file_service,
+    filename="sifile.txt",
+    max_retries=20,
+    wait_time_between_retries=1,  # seconds
+):
+    """
+    Downloads the file with retries and parses server info.
+
+    Parameters
+    ----------
+    file_service: PimFileTransferService
+        Service object with method download_file(filename, target_dir).
+    filename: str
+        Name of the file to download.
+    max_retries: int
+        Maximum number of attempts.
+    wait_time_between_retries: float
+        Seconds to wait between retries (can be fractional, e.g., 0.5 for half a second).
+
+    Returns
+    -------
+        Tuple (ip, port, password) parsed from the downloaded file.
+
+    Raises
+    ------
+    TimeoutError
+        If unable to download the server info file after multiple retries.
+    """
+    with tempfile.TemporaryDirectory(prefix="fluent_sifile_") as tmpdir:
+        for attempt in range(1, max_retries + 1):
+            try:
+                file_service.download_file(filename, tmpdir)
+                break
+            except Exception as ex:
+                logger.warning(
+                    f"Attempt {attempt} of {max_retries} failed to download {filename}: {ex}"
+                )
+                if attempt == max_retries:
+                    raise TimeoutError(
+                        f"Failed to download file '{filename}' after {max_retries} attempts "
+                        f"with {wait_time_between_retries}s between retries."
+                    ) from ex
+                time.sleep(wait_time_between_retries)
+
+        return _parse_server_info_file(os.path.join(tmpdir, filename))
+
+
 def launch_remote_fluent(
     session_cls,
     start_transcript: bool,
     product_version: str | None = None,
     cleanup_on_exit: bool = True,
     mode: FluentMode = FluentMode.SOLVER,
-    dimensionality: str | None = None,
+    dimensionality: Dimension | int = Dimension.THREE,
     launcher_args: Dict[str, Any] | None = None,
     file_transfer_service: Any | None = None,
 ) -> Meshing | PureMeshing | Solver | SolverIcing:
@@ -223,6 +281,11 @@ def launch_remote_fluent(
     -------
     Meshing | PureMeshing | Solver | SolverIcing
         Session object.
+
+    Raises
+    ------
+    TimeoutError
+        If unable to download the server info file after multiple retries.
     """
 
     pim = pypim.connect()
@@ -230,15 +293,27 @@ def launch_remote_fluent(
     instance = create_fluent_instance(
         pim=pim,
         mode=mode,
-        dimensionality=dimensionality,
+        dimensionality=Dimension(dimensionality),
         product_version=product_version,
     )
 
     instance.wait_for_ready()
 
-    channel = instance.build_grpc_channel()
+    ip, port, password = get_ip_port_password(
+        file_service=PimFileTransferService(pim_instance=instance)
+    )
+
+    channel = instance.build_grpc_channel(
+        options=[
+            ("grpc.max_send_message_length", _get_max_c_int_limit()),
+            ("grpc.max_receive_message_length", _get_max_c_int_limit()),
+        ],
+    )
 
     fluent_connection = create_fluent_connection(
+        ip=ip,
+        port=port,
+        password=password,
         channel=channel,
         cleanup_on_exit=cleanup_on_exit,
         instance=instance,
@@ -258,7 +333,7 @@ def launch_remote_fluent(
 
 
 def create_fluent_instance(
-    pim, mode: FluentMode, dimensionality: str | None, product_version: str | None
+    pim, mode: FluentMode, dimensionality: Dimension, product_version: str | None
 ):
     """Create a Fluent instance based on mode and dimensionality."""
 
@@ -274,11 +349,20 @@ def create_fluent_instance(
 
 
 def create_fluent_connection(
-    channel, cleanup_on_exit: bool, instance, launcher_args: Dict[str, Any] | None
+    ip: str,
+    port: int,
+    password: str,
+    channel,
+    cleanup_on_exit: bool,
+    instance,
+    launcher_args: Dict[str, Any] | None,
 ):
     """Create a Fluent connection."""
 
     return FluentConnection(
+        ip=ip,
+        port=port,
+        password=password,
         channel=channel,
         cleanup_on_exit=cleanup_on_exit,
         remote_instance=instance,

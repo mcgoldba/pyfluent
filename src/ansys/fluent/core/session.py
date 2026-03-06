@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -25,15 +25,16 @@
 from enum import Enum
 import json
 import logging
+import os
 from typing import Any, Callable, Dict
 import warnings
 import weakref
 
 from deprecated.sphinx import deprecated
 
+from ansys.fluent.core._types import PathType
 from ansys.fluent.core.fluent_connection import FluentConnection
 from ansys.fluent.core.journaling import Journal
-from ansys.fluent.core.launcher.launcher_utils import is_compose
 from ansys.fluent.core.pyfluent_warnings import (
     PyFluentDeprecationWarning,
     PyFluentUserWarning,
@@ -46,11 +47,11 @@ from ansys.fluent.core.streaming_services.datamodel_event_streaming import (
     DatamodelEvents,
 )
 from ansys.fluent.core.streaming_services.events_streaming import EventsManager
-from ansys.fluent.core.streaming_services.field_data_streaming import FieldDataStreaming
 from ansys.fluent.core.streaming_services.transcript_streaming import Transcript
 from ansys.fluent.core.utils.fluent_version import FluentVersion
 
 from .rpvars import RPVars
+from .utils.deprecate import deprecate_function
 
 try:
     from ansys.fluent.core.solver.settings import root
@@ -61,13 +62,19 @@ logger = logging.getLogger("pyfluent.general")
 
 
 def _parse_server_info_file(file_name: str):
+    """Parse server info file.
+    Returns (ip, port, password) or (unix_socket, password)"""
     with open(file_name, encoding="utf-8") as f:
         lines = f.readlines()
-    ip_and_port = lines[0].strip().split(":")
-    ip = ip_and_port[0]
-    port = int(ip_and_port[1])
+    address = lines[0].strip()
     password = lines[1].strip()
-    return ip, port, password
+    if address.startswith("unix:"):
+        return address, password
+    else:
+        ip_and_port = address.split(":")
+        ip = ip_and_port[0]
+        port = int(ip_and_port[1])
+        return ip, port, password
 
 
 class _IsDataValid:
@@ -151,8 +158,19 @@ class BaseSession:
             file_transfer_service,
             event_type,
             get_zones_info,
+            launcher_args,
         )
         self.register_finalizer_callback = fluent_connection.register_finalizer_cb
+
+    _inactive_session_allow_list = [
+        "is_active",
+        "_fluent_connection",
+        "_fluent_connection_backup",
+        "wait_process_finished",
+        # `_exit` is kept accessible even for inactive sessions to allow callers
+        # to trigger a clean shutdown/teardown on sessions that are no longer active.
+        "_exit",
+    ]
 
     def _build_from_fluent_connection(
         self,
@@ -161,10 +179,14 @@ class BaseSession:
         file_transfer_service: Any | None = None,
         event_type=None,
         get_zones_info: weakref.WeakMethod[Callable[[], list[ZoneInfo]]] | None = None,
+        launcher_args: Dict[str, Any] | None = None,
     ):
         """Build a BaseSession object from fluent_connection object."""
         self._fluent_connection = fluent_connection
+        # Stores the backup of the fluent connection for later reference.
+        self._fluent_connection_backup = self._fluent_connection
         self._file_transfer_service = file_transfer_service
+        self._launcher_args = launcher_args
         self._error_state = fluent_connection._error_state
         self.scheme = scheme_eval
         self.rp_vars = RPVars(self.scheme.string_eval)
@@ -221,36 +243,7 @@ class BaseSession:
             FieldDataService, self._error_state
         )
 
-        class Fields:
-            """Container for field and solution variables."""
-
-            def __init__(self, _session):
-                """Initialize Fields."""
-                self._is_solution_data_valid = (
-                    _session._app_utilities.is_solution_data_available
-                )
-                self.field_info = service_creator("field_info").create(
-                    _session._field_data_service,
-                    self._is_solution_data_valid,
-                )
-                self.field_data = service_creator("field_data").create(
-                    _session._field_data_service,
-                    self.field_info,
-                    self._is_solution_data_valid,
-                    _session.scheme,
-                    get_zones_info,
-                )
-                self.field_data_streaming = FieldDataStreaming(
-                    _session._fluent_connection._id, _session._field_data_service
-                )
-                self.field_data_old = service_creator("field_data_old").create(
-                    _session._field_data_service,
-                    self.field_info,
-                    self._is_solution_data_valid,
-                    _session.scheme,
-                )
-
-        self.fields = Fields(self)
+        self.fields = Fields(self, get_zones_info)
 
         self._settings_service = service_creator("settings").create(
             fluent_connection._channel,
@@ -269,13 +262,18 @@ class BaseSession:
         for obj in filter(None, (self._datamodel_events, self.transcript, self.events)):
             self._fluent_connection.register_finalizer_cb(obj.stop)
 
+    @deprecate_function(version="v0.38.0", new_func="is_active")
     def is_server_healthy(self) -> bool:
-        """Whether the current session is healthy (i.e. The server is 'SERVING')."""
+        """Whether the current session is healthy (i.e. the server is 'SERVING')."""
+        return self._is_server_healthy()
+
+    def _is_server_healthy(self) -> bool:
+        """Whether the current session is healthy (i.e. the server is 'SERVING')."""
         return self._health_check.is_serving
 
     def is_active(self) -> bool:
         """Whether the current session is active."""
-        return True if self._fluent_connection else False
+        return self._fluent_connection is not None and self._is_server_healthy()
 
     @property
     @deprecated(version="0.32", reason="Use ``session.scheme``.")
@@ -283,6 +281,7 @@ class BaseSession:
         """Provides access to Fluent field information."""
         return self.scheme
 
+    @property
     @deprecated(version="0.32", reason="Use ``session.is_server_healthy``.")
     def health_check(self):
         """Provides access to Health Check service."""
@@ -356,11 +355,18 @@ class BaseSession:
         Session
             Session instance
         """
-        ip, port, password = _parse_server_info_file(server_info_file_name)
+        values = _parse_server_info_file(server_info_file_name)
+        if len(values) == 2:
+            address, password = values
+            ip, port = None, None
+        else:
+            ip, port, password = values
+            address = None
         fluent_connection = FluentConnection(
             ip=ip,
             port=port,
             password=password,
+            address=address,
             file_transfer_service=file_transfer_service,
             **connection_kwargs,
         )
@@ -382,12 +388,44 @@ class BaseSession:
         return FluentVersion(self.scheme.version)
 
     def _exit_compose_service(self):
-        if self._fluent_connection._container and is_compose():
-            self._fluent_connection._container.stop()
+        args = self._launcher_args or {}
+        compose_config = args.get("compose_config", None)
+
+        container = self._fluent_connection._container
+        if compose_config and compose_config.is_compose:
+            container.stop()
+
+    def wait_process_finished(self, wait: float | int | bool = 60):
+        """Returns ``True`` if local Fluent processes have finished, ``False`` if they
+        are still running when wait limit (default 60 seconds) is reached. Immediately
+        cancels and returns ``None`` if ``wait`` is set to ``False``.
+
+        Parameters
+        ----------
+        wait : float, int or bool, optional
+            How long to wait for processes to finish before returning, by default 60 seconds.
+            Can also be set to ``True``, which will result in waiting indefinitely.
+
+        Raises
+        ------
+        UnsupportedRemoteFluentInstance
+            If current Fluent instance is running remotely.
+        WaitTypeError
+            If ``wait`` is specified improperly.
+        """
+        return self._fluent_connection_backup.wait_process_finished()
 
     def exit(self, **kwargs) -> None:
-        """Exit session."""
+        """Exit session.
+
+        This public method is a convenience wrapper that delegates directly to
+        :meth:`_exit`.
+        """
         logger.debug("session.exit() called")
+        self._exit(**kwargs)
+
+    def _exit(self, **kwargs) -> None:
+        """Exit session."""
         if self._fluent_connection:
             self._exit_compose_service()
             self._fluent_connection.exit(**kwargs)
@@ -433,8 +471,10 @@ class BaseSession:
         remote_file_name : str, optional
             remote file name, by default None
         """
-        warnings.warn(self._file_transfer_api_warning("upload()"), PyFluentUserWarning)
         if self._file_transfer_service:
+            warnings.warn(
+                self._file_transfer_api_warning("upload()"), PyFluentUserWarning
+            )
             return self._file_transfer_service.upload(file_name, remote_file_name)
 
     def download(self, file_name: str, local_directory: str | None = None):
@@ -447,21 +487,21 @@ class BaseSession:
         local_directory : str, optional
             Local destination directory. The default is the current working directory.
         """
-        warnings.warn(
-            self._file_transfer_api_warning("download()"), PyFluentUserWarning
-        )
         if self._file_transfer_service:
+            warnings.warn(
+                self._file_transfer_api_warning("download()"), PyFluentUserWarning
+            )
             return self._file_transfer_service.download(file_name, local_directory)
 
-    def chdir(self, path: str) -> None:
+    def chdir(self, path: PathType) -> None:
         """Change Fluent working directory.
 
         Parameters
         ----------
-        path : str
+        path : os.PathLike[str | bytes] | str | bytes
             Path of the directory to change.
         """
-        self._app_utilities.set_working_directory(path)
+        self._app_utilities.set_working_directory(os.fspath(path))
 
     def __enter__(self):
         return self
@@ -469,16 +509,71 @@ class BaseSession:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any):
         """Close the Fluent connection and exit Fluent."""
         logger.debug("session.__exit__() called")
-        self.exit()
+        self._exit()
 
     def __dir__(self):
         if self._fluent_connection is None:
-            return ["is_active"]
+            names = super().__dir__()
+            return [
+                name
+                for name in names
+                if (name.startswith("__") and name.endswith("__"))
+                or name in {"is_active", "wait_process_finished"}
+            ]
         dir_list = set(list(self.__dict__.keys()) + dir(type(self))) - {
             "field_data",
             "field_info",
             "field_data_streaming",
             "start_journal",
             "stop_journal",
+            "scheme_eval",
         }
         return sorted(dir_list)
+
+    def enable_beta_features(self):
+        """Enable access to Fluent beta-features"""
+        self._app_utilities.enable_beta()
+
+    @property
+    def _is_beta_enabled(self):
+        return self._app_utilities.is_beta_enabled()
+
+
+class Fields:
+    """Container for field and solution variables."""
+
+    def __init__(
+        self,
+        _session: BaseSession,
+        get_zones_info: weakref.WeakMethod[Callable[[], list[ZoneInfo]]] | None = None,
+    ):
+        """Initialize Fields."""
+        self._is_solution_data_valid = (
+            _session._app_utilities.is_solution_data_available
+        )
+        self._field_info = service_creator("field_info").create(
+            _session._field_data_service,
+            self._is_solution_data_valid,
+        )
+        self.field_data = service_creator("field_data").create(
+            _session._field_data_service,
+            self._field_info,
+            self._is_solution_data_valid,
+            _session.scheme,
+            get_zones_info,
+        )
+        self.field_data_streaming = service_creator("field_data_streaming").create(
+            _session._fluent_connection._id, _session._field_data_service
+        )
+        self.field_data_old = service_creator("field_data_old").create(
+            _session._field_data_service,
+            self._field_info,
+            self._is_solution_data_valid,
+            _session.scheme,
+        )
+
+    @property
+    @deprecated(version="0.34.0", reason="Use relevant ``field_data`` methods..")
+    def field_info(self):
+        """Field Information."""
+        return self._field_info

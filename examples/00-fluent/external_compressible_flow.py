@@ -1,4 +1,10 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# /// script
+# dependencies = [
+#   "ansys-fluent-core",
+# ]
+# ///
+
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -67,6 +73,9 @@ an aspect ratio of 3.8, and a taper ratio of 0.562.
 # the geometry files.
 
 # sphinx_gallery_thumbnail_path = '_static/external_compressible_flow.png'
+import shutil
+import tempfile
+
 import ansys.fluent.core as pyfluent
 from ansys.fluent.core import examples
 
@@ -81,19 +90,22 @@ wing_spaceclaim_file, wing_intermediary_file = [
 # Launch Fluent as a service in meshing mode with double precision running on
 # four processors and print Fluent version.
 
-meshing = pyfluent.launch_fluent(
+meshing_session = pyfluent.launch_fluent(
     precision="double",
     processor_count=4,
     mode="meshing",
 )
-print(meshing.get_fluent_version())
+print(meshing_session.get_fluent_version())
+
+tmpdir = tempfile.mkdtemp()
+meshing_session.preferences.MeshingWorkflow.TempFolder = tmpdir
 
 ###############################################################################
 # Initialize workflow
 # ~~~~~~~~~~~~~~~~~~~
 # Initialize the watertight geometry meshing workflow.
 
-meshing.workflow.InitializeWorkflow(WorkflowType="Watertight Geometry")
+meshing_session.workflow.InitializeWorkflow(WorkflowType="Watertight Geometry")
 
 ###############################################################################
 # Watertight geometry meshing workflow
@@ -104,21 +116,20 @@ meshing.workflow.InitializeWorkflow(WorkflowType="Watertight Geometry")
 # Import CAD and set length units
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Import the CAD geometry and set the length units to inches.
-geo_import = meshing.workflow.TaskObject["Import Geometry"]
+geo_import = meshing_session.workflow.TaskObject["Import Geometry"]
 geo_import.Arguments.set_state(
     {
         "FileName": wing_intermediary_file,
     }
 )
 
-meshing.upload(wing_intermediary_file)
 geo_import.Execute()
 
 ###############################################################################
 # Add local sizing
 # ~~~~~~~~~~~~~~~~
 # Add local sizing controls to the faceted geometry.
-local_sizing = meshing.workflow.TaskObject["Add Local Sizing"]
+local_sizing = meshing_session.workflow.TaskObject["Add Local Sizing"]
 local_sizing.Arguments.set_state(
     {
         "AddChild": "yes",
@@ -157,7 +168,7 @@ local_sizing.AddChildAndUpdate()
 # Generate surface mesh
 # ~~~~~~~~~~~~~~~~~~~~~
 # Generate the surface mash.
-surface_mesh_gen = meshing.workflow.TaskObject["Generate the Surface Mesh"]
+surface_mesh_gen = meshing_session.workflow.TaskObject["Generate the Surface Mesh"]
 surface_mesh_gen.Arguments.set_state(
     {"CFDSurfaceMeshControls": {"MaxSize": 1000, "MinSize": 2}}
 )
@@ -168,7 +179,7 @@ surface_mesh_gen.Execute()
 # Describe geometry
 # ~~~~~~~~~~~~~~~~~
 # Describe geometry and define the fluid region.
-describe_geo = meshing.workflow.TaskObject["Describe Geometry"]
+describe_geo = meshing_session.workflow.TaskObject["Describe Geometry"]
 describe_geo.UpdateChildTasks(SetupTypeChanged=False)
 
 describe_geo.Arguments.set_state(
@@ -184,21 +195,21 @@ describe_geo.Execute()
 # ~~~~~~~~~~~~~~~~~
 # Update the boundaries.
 
-meshing.workflow.TaskObject["Update Boundaries"].Execute()
+meshing_session.workflow.TaskObject["Update Boundaries"].Execute()
 
 ###############################################################################
 # Update regions
 # ~~~~~~~~~~~~~~
 # Update the regions.
 
-meshing.workflow.TaskObject["Update Regions"].Execute()
+meshing_session.workflow.TaskObject["Update Regions"].Execute()
 
 ###############################################################################
 # Add boundary layers
 # ~~~~~~~~~~~~~~~~~~~
 # Add boundary layers, which consist of setting properties for the
 # boundary layer mesh.
-add_boundary_layer = meshing.workflow.TaskObject["Add Boundary Layers"]
+add_boundary_layer = meshing_session.workflow.TaskObject["Add Boundary Layers"]
 add_boundary_layer.Arguments.set_state({"NumberOfLayers": 12})
 
 add_boundary_layer.AddChildAndUpdate()
@@ -208,7 +219,7 @@ add_boundary_layer.AddChildAndUpdate()
 # ~~~~~~~~~~~~~~~~~~~~
 # Generate the volume mesh, which consists of setting properties for the
 # volume mesh.
-volume_mesh_gen = meshing.workflow.TaskObject["Generate the Volume Mesh"]
+volume_mesh_gen = meshing_session.workflow.TaskObject["Generate the Volume Mesh"]
 volume_mesh_gen.Arguments.set_state(
     {
         "VolumeFill": "poly-hexcore",
@@ -227,20 +238,20 @@ volume_mesh_gen.Execute()
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Check the mesh in meshing mode.
 
-meshing.tui.mesh.check_mesh()
+meshing_session.tui.mesh.check_mesh()
 
 ###############################################################################
 # Save mesh file
 # ~~~~~~~~~~~~~~
 # Save the mesh file (``wing.msh.h5``).
 
-meshing.meshing.File.WriteMesh(FileName="wing.msh.h5")
+meshing_session.meshing.File.WriteMesh(FileName="wing.msh.h5")
 
 ###############################################################################
 # Solve and postprocess
 # ---------------------
 # Once you have completed the watertight geometry meshing workflow, you can
-# solve and postprcess the results.
+# solve and postprocess the results.
 #
 # Switch to solution mode
 # ~~~~~~~~~~~~~~~~~~~~~~~
@@ -248,7 +259,7 @@ meshing.meshing.File.WriteMesh(FileName="wing.msh.h5")
 # using Fluent in meshing mode, you can switch to solver mode to complete the
 # setup of the simulation.
 
-solver = meshing.switch_to_solver()
+solver_session = meshing_session.switch_to_solver()
 
 ###############################################################################
 # Check mesh in solver mode
@@ -258,7 +269,7 @@ solver = meshing.switch_to_solver()
 # reports a number of other mesh features that are checked. Any errors in the
 # mesh are reported.
 
-solver.mesh.check()
+solver_session.settings.mesh.check()
 
 ###############################################################################
 # Define model
@@ -268,7 +279,7 @@ solver.mesh.check()
 # model : k-omega
 # k-omega model : sst
 
-viscous = solver.setup.models.viscous
+viscous = solver_session.settings.setup.models.viscous
 
 viscous.model = "k-omega"
 viscous.k_omega_model = "sst"
@@ -285,7 +296,7 @@ viscous.k_omega_model = "sst"
 # reference temperature : 273.11 [K]
 # effective temperature : 110.56 [K]
 
-air = solver.setup.materials.fluid["air"]
+air = solver_session.settings.setup.materials.fluid["air"]
 
 air.density.option = "ideal-gas"
 
@@ -312,9 +323,11 @@ air.viscosity.sutherland.effective_temperature = 110.56
 # turbulent intensity : 5 [%]
 # turbulent viscosity ratio : 10
 
-pressure_farfield = solver.setup.boundary_conditions.pressure_far_field[
-    "pressure_farfield"
-]
+pressure_farfield = (
+    solver_session.settings.setup.boundary_conditions.pressure_far_field[
+        "pressure_farfield"
+    ]
+)
 
 pressure_farfield.momentum.gauge_pressure = 0
 
@@ -337,41 +350,48 @@ pressure_farfield.turbulence.turbulent_viscosity_ratio = 10
 
 # operating pressure : 80600 [Pa]
 
-solver.setup.general.operating_conditions.operating_pressure = 80600
+solver_session.settings.setup.general.operating_conditions.operating_pressure = 80600
 
 ###############################################################################
 # Initialize flow field
 # ~~~~~~~~~~~~~~~~~~~~~
 # Initialize the flow field using hybrid initialization.
 
-solver.solution.initialization.hybrid_initialize()
+solver_session.settings.solution.initialization.hybrid_initialize()
 
 ###############################################################################
 # Save case file
 # ~~~~~~~~~~~~~~
 # Save the case file ``external_compressible1.cas.h5``.
 
-solver.file.write(file_name="external_compressible.cas.h5", file_type="case")
+solver_session.settings.file.write(
+    file_name="external_compressible.cas.h5", file_type="case"
+)
 
 ###############################################################################
 # Solve for 25 iterations
 # ~~~~~~~~~~~~~~~~~~~~~~~~
 # Solve for 25 iterations (100 iterations is recommended, however for this example 25 is sufficient).
 
-solver.solution.run_calculation.iterate(iter_count=25)
+solver_session.settings.solution.run_calculation.iterate(iter_count=25)
 
 ###############################################################################
 # Write final case file and data
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Write the final case file and the data.
 
-solver.file.write(file_name="external_compressible1.cas.h5", file_type="case")
+solver_session.settings.file.write(
+    file_name="external_compressible1.cas.h5", file_type="case"
+)
 
 ###############################################################################
 # Close Fluent
 # ~~~~~~~~~~~~
 # Close Fluent.
 
-solver.exit()
+solver_session.exit()
+
+shutil.rmtree(tmpdir, ignore_errors=True)
+shutil.rmtree("wing_workflow_files", ignore_errors=True)
 
 ###############################################################################

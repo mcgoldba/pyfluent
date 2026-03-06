@@ -15,7 +15,7 @@ Sample usage
 
 The following examples cover both single-phase and multiphase cases. After case and data files are
 loaded, field information is accessed and some field data is extracted. Here, the extraction uses two approaches:
-a transaction-based approach where multiple data requests are bundled into each transaction and a direct approach
+a batch-based approach where multiple data requests are bundled into each batch and a direct approach
 where a sequence of separate requests are made.
 
 Single-phase
@@ -23,22 +23,23 @@ Single-phase
 
 .. code-block:: python
 
-  >>> from ansys.fluent.core import examples
   >>> from ansys.fluent.core.file_session import FileSession
-  >>> from ansys.fluent.core.services.field_data import (
+  >>> from ansys.fluent.core import (
+  >>>   examples,
   >>>   ScalarFieldDataRequest,
   >>>   SurfaceDataType,
   >>>   SurfaceFieldDataRequest,
   >>>   VectorFieldDataRequest,
   >>> )
+  >>> from ansys.units import VariableCatalog
 
   >>> case_file_name = examples.download_file("elbow1.cas.h5", "pyfluent/file_session")
   >>> data_file_name = examples.download_file("elbow1.dat.h5", "pyfluent/file_session")
   >>> file_session = FileSession(case_file_name, data_file_name)
 
-  >>> file_session.fields.field_info.get_scalar_field_range("SV_T")
+  >>> file_session.fields.field_data.scalar_fields.range(VariableCatalog.TEMPERATURE)
   [0.0, 313.1515948109515]
-  >>> file_session.fields.field_info.get_surfaces_info()
+  >>> file_session.fields.field_data.surfaces()
   {'wall': {'surface_id': [3],
    'zone_id': -1,
    'zone_type': 'wall',
@@ -52,7 +53,7 @@ Single-phase
    'zone_id': -1,
    'zone_type': 'wall',
    'type': 'plane'}}
-  >>> file_session.fields.field_info.get_scalar_fields_info()
+  >>> file_session.fields.field_data.scalar_fields()
   {'SV_ARTIFICIAL_WALL_FLAG': {'display_name': 'SV_ARTIFICIAL_WALL_FLAG',
    'section': 'field-data',
    'domain': 'phase-1'},
@@ -63,27 +64,31 @@ Single-phase
    'SV_WALL_YPLUS_UTAU': {'display_name': 'SV_WALL_YPLUS_UTAU',
    'section': 'field-data',
    'domain': 'phase-1'}}
-   >>> file_session.fields.field_info.get_vector_fields_info()
+   >>> file_session.fields.field_data.vector_fields()
    {'velocity': {'x-component': 'SV_U',
     'y-component': 'SV_V',
     'z-component': 'SV_W'}}
-   >>> transaction = file_session.fields.field_data.new_transaction()
+   >>> batch = file_session.fields.field_data.new_batch()
    >>> vertices_and_faces_connectivity_request = SurfaceFieldDataRequest(
    >>>      data_types=[SurfaceDataType.Vertices, SurfaceDataType.FacesConnectivity],
    >>>      surfaces=[3, 4],
+   >>>      flatten_connectivity=True,
    >>> )
-   >>> solution_variable_temperature_request = ScalarFieldDataRequest(field_name="SV_T", surfaces=[3, 4], node_value=False, boundary_value=False)
-   >>> velocity_request = VectorFieldDataRequest(field_name="velocity", surfaces=[3, 4])
-   >>> transaction.add_requests(vertices_and_faces_connectivity_request, solution_variable_temperature_request, velocity_request)
-   >>> data = transaction.get_response()
-   >>> data.get_field_data(vertices_and_faces_connectivity_request)[3][SurfaceDataType.Vertices]
+   >>> solution_variable_temperature_request = ScalarFieldDataRequest(field_name=VariableCatalog.TEMPERATURE, surfaces=[3, 4], node_value=False, boundary_value=False)
+   >>> velocity_request = VectorFieldDataRequest(field_name=VariableCatalog.VELOCITY, surfaces=[3, 4])
+   >>> batch.add_requests(vertices_and_faces_connectivity_request, solution_variable_temperature_request, velocity_request)
+   >>> data = batch.get_response()
+   >>> data.get_field_data(vertices_and_faces_connectivity_request)[3].vertices
    array([[ 0.        , -0.1016    ,  0.        ],
        [-0.00635   , -0.1016    ,  0.        ],
        [-0.00634829, -0.10203364,  0.00662349],
        ...,
        [ 0.01857703, -0.19223897,  0.03035362],
        [ 0.0124151 , -0.19273971,  0.03034735],
-       [ 0.00620755, -0.19304685,  0.03033731]])
+       [ 0.00620755, -0.19304685,  0.03033731]], shape=(3810, 3))
+   >>> data.get_field_data(vertices_and_faces_connectivity_request)[4].connectivity
+   array([   4,  295,  294, ...,  265, 1482, 2183],
+         shape=(10090,), dtype=uint32)
    >>> data.get_field_data(solution_variable_temperature_request)[4]
    array([293.14999, 293.14999, 293.14999, ..., 293.14999, 293.14999,
        293.14999])
@@ -97,11 +102,11 @@ Single-phase
    (3810, 3)
    >>> file_session.fields.field_data.get_field_data(vertices_request)[3][1500][0]
    0.12405861914157867
-   >>> file_session.fields.field_data.get_field_data(ScalarFieldDataRequest(field_name="SV_T", surfaces=["wall"]))["wall"].shape
+   >>> file_session.fields.field_data.get_field_data(ScalarFieldDataRequest(field_name=VariableCatalog.TEMPERATURE, surfaces=["wall"]))["wall"].shape
    (3630,)
-   >>> file_session.fields.field_data.get_field_data(ScalarFieldDataRequest(field_name="SV_T", surfaces=["wall"]))["wall"][1500]
+   >>> file_session.fields.field_data.get_field_data(ScalarFieldDataRequest(field_name=VariableCatalog.TEMPERATURE, surfaces=["wall"]))["wall"][1500]
    293.18071329432047
-   >>> velocity_request = VectorFieldDataRequest(field_name="velocity", surfaces=["symmetry"])
+   >>> velocity_request = VectorFieldDataRequest(field_name=VariableCatalog.VELOCITY, surfaces=["symmetry"])
    >>> file_session.fields.field_data.get_field_data(velocity_request)["symmetry"].shape
    (2018, 3)
    >>> file_session.fields.field_data.get_field_data(velocity_request)["symmetry"][1000][0]
@@ -113,9 +118,9 @@ Multiphase
 
 .. code-block:: python
 
-  >>> from ansys.fluent.core import examples
   >>> from ansys.fluent.core.file_session import FileSession
-  >>> from ansys.fluent.core.services.field_data import (
+  >>> from ansys.fluent.core import (
+  >>>   examples,
   >>>   ScalarFieldDataRequest,
   >>>   SurfaceDataType,
   >>>   SurfaceFieldDataRequest,
@@ -128,9 +133,9 @@ Multiphase
   >>> file_session.read_case(case_file_name)
   >>> file_session.read_data(data_file_name)
 
-  >>> file_session.fields.field_info.get_scalar_field_range("phase-2:SV_P")
+  >>> file_session.fields.field_data.scalar_fields.range("phase-2:SV_P")
   [0.0, 1.5435200335871788e-11]
-  >>> file_session.fields.field_info.get_scalar_fields_info()
+  >>> file_session.fields.field_data.scalar_fields()
   {'phase-1:SV_ARTIFICIAL_WALL_FLAG': {'display_name': 'SV_ARTIFICIAL_WALL_FLAG',
    'section': 'field-data',
    'domain': 'phase-1'},
@@ -141,7 +146,7 @@ Multiphase
    'phase-4:': {'display_name': '',
    'section': 'field-data',
    'domain': 'phase-4'}}
-   >>> file_session.fields.field_info.get_vector_fields_info()
+   >>> file_session.fields.field_data.vector_fields()
    {'phase-1:velocity': {'x-component': 'phase-1: SV_U',
     'y-component': 'phase-1: SV_V',
     'z-component': 'phase-1: SV_W'},
@@ -149,11 +154,11 @@ Multiphase
     'phase-4:velocity': {'x-component': 'phase-4: SV_U',
     'y-component': 'phase-4: SV_V',
     'z-component': 'phase-4: SV_W'}}
-   >>> transaction = file_session.fields.field_data.new_transaction()
+   >>> batch = file_session.fields.field_data.new_batch()
    >>> ph1_density_request = ScalarFieldDataRequest(field_name="phase-1:SV_DENSITY", surfaces=[30], node_value=False, boundary_value=False)
    >>> ph1_velocity_request = VectorFieldDataRequest(field_name="phase-1:velocity", surfaces=[30])
-   >>> transaction.add_requests(ph1_density_request, ph1_velocity_request)
-   >>> data = transaction.get_response()
+   >>> batch.add_requests(ph1_density_request, ph1_velocity_request)
+   >>> data = batch.get_response()
    >>> data.get_field_data(ph1_density_request)[30]
    array([1.225, 1.225, 1.225, 1.225, 1.225, 1.225, 1.225, 1.225, 1.225,
        1.225, 1.225, 1.225, 1.225, 1.225, 1.225, 1.225, 1.225, 1.225,

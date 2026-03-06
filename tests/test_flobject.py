@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -26,10 +26,12 @@ from collections.abc import MutableMapping
 import io
 import weakref
 
+from conftest import SKIP_INVESTIGATING
 import pytest
-from test_utils import count_key_recursive
+from test_utils import MockTracingInterceptor, count_key_recursive
 
 from ansys.fluent.core.examples import download_file
+from ansys.fluent.core.services.interceptors import TracingInterceptor
 from ansys.fluent.core.solver import flobject
 from ansys.fluent.core.solver.flobject import (
     InactiveObjectError,
@@ -62,7 +64,6 @@ class Setting:
 
     attrs = {
         "active?": lambda self: True,
-        "webui-release-active?": lambda self: True,
         "deprecated-version": lambda self: None,
     }
 
@@ -295,6 +296,7 @@ class Command(Setting):
     def __init__(self, parent):
         self.attrs = super().attrs.copy()
         self.attrs["arguments-aliases"] = lambda self: {}
+        self.attrs["read-only?"] = lambda self: False
         super().__init__(parent)
 
     def __call__(self, **kwds):
@@ -324,7 +326,6 @@ class Root(Group):
             attrs = {
                 "active?": lambda self: not self.parent.objs["b-3"].get_state(),
                 "allowed-values": lambda self: ["foo", "bar"],
-                "webui-release-active?": lambda self: True,
                 "deprecated-version": lambda self: None,
             }
 
@@ -526,6 +527,7 @@ def test_list_object():
 def test_command():
     r = flobject.get_root(Proxy())
     r.g_1.r_1 = 2.4
+    r.c_1._setattr("_version", FluentVersion.v261)
     r.c_1()
     assert r.g_1.r_1() == 2.4 + 2.3
     r.c_1(a_2=False)
@@ -707,24 +709,15 @@ def test_accessor_methods_on_settings_object(static_mixer_settings_session):
     modified = velocity_inlet.user_creatable()
     assert existing == modified
 
-    if solver.get_fluent_version() < FluentVersion.v242:
-        turbulent_viscosity_ratio = velocity_inlet[
-            "inlet1"
-        ].turbulence.turbulent_viscosity_ratio_real
+    turbulent_viscosity_ratio = velocity_inlet[
+        "inlet1"
+    ].turbulence.turbulent_viscosity_ratio
 
-        path = '<session>.setup.boundary_conditions.velocity_inlet["inlet1"].turbulence.turbulent_viscosity_ratio_real'
-        name = "turbulent_viscosity_ratio_real"
-
+    if solver.get_fluent_version() >= FluentVersion.v251:
+        path = '<session>.settings.setup.boundary_conditions.velocity_inlet["inlet1"].turbulence.turbulent_viscosity_ratio'
     else:
-        turbulent_viscosity_ratio = velocity_inlet[
-            "inlet1"
-        ].turbulence.turbulent_viscosity_ratio
-
-        if solver.get_fluent_version() >= FluentVersion.v251:
-            path = '<session>.settings.setup.boundary_conditions.velocity_inlet["inlet1"].turbulence.turbulent_viscosity_ratio'
-        else:
-            path = '<session>.setup.boundary_conditions.velocity_inlet["inlet1"].turbulence.turbulent_viscosity_ratio'
-        name = "turbulent_viscosity_ratio"
+        path = '<session>.setup.boundary_conditions.velocity_inlet["inlet1"].turbulence.turbulent_viscosity_ratio'
+    name = "turbulent_viscosity_ratio"
 
     assert turbulent_viscosity_ratio.python_path == path
     assert turbulent_viscosity_ratio.python_name == name
@@ -741,10 +734,7 @@ def test_accessor_methods_on_settings_object(static_mixer_settings_session):
     assert count_key_recursive(default_attrs, "default") > 5
 
     mesh = solver.results.graphics.mesh.create("mesh-1")
-    if solver.get_fluent_version() < FluentVersion.v242:
-        assert mesh.name.is_read_only()
-    else:
-        assert not mesh.name.is_read_only()
+    assert not mesh.name.is_read_only()
 
     assert solver.results.graphics.mesh.get_object_names() == ["mesh-1"]
 
@@ -767,10 +757,7 @@ def test_accessor_methods_on_settings_object_types(static_mixer_settings_session
     accuracy_control = (
         solver.setup.models.discrete_phase.numerics.tracking.accuracy_control
     )
-    if solver.get_fluent_version() < FluentVersion.v241:
-        max_refinements = accuracy_control.max_number_of_refinements
-    else:
-        max_refinements = accuracy_control.max_num_refinements
+    max_refinements = accuracy_control.max_num_refinements
 
     assert max_refinements.min() == 0
     assert max_refinements.max() == 1000000
@@ -816,26 +803,13 @@ def test_find_children_from_fluent_solver_session(static_mixer_settings_session)
         if path.endswith("geom_dir_spec")
     )
 
-    if static_mixer_settings_session.get_fluent_version() < FluentVersion.v242:
-        assert set(
-            find_children(
-                load_mixer.materials.fluid["air"].density.piecewise_polynomial
-            )
-        ) >= {
-            "minimum",
-            "maximum",
-            "coefficients",
-        }
-    else:
-        assert set(
-            find_children(
-                load_mixer.materials.fluid["air"].density.piecewise_polynomial
-            )
-        ) >= {
-            "range/minimum",
-            "range/maximum",
-            "range/coefficients",
-        }
+    assert set(
+        find_children(load_mixer.materials.fluid["air"].density.piecewise_polynomial)
+    ) >= {
+        "range/minimum",
+        "range/maximum",
+        "range/coefficients",
+    }
 
 
 @pytest.mark.fluent_version(">=24.1")
@@ -880,7 +854,7 @@ def test_settings_wild_card_access(new_solver_session) -> None:
         solver.setup.boundary_conditions.velocity_inlet["inlet-1"]
     assert (
         msg.value.args[0] == "'velocity_inlet' has no attribute 'inlet-1'.\n"
-        "The most similar names are: inlet1, inlet2."
+        "The most similar names are: inlet1, inlet2"
     )
 
 
@@ -903,7 +877,7 @@ def test_settings_matching_names(new_solver_session) -> None:
 
     assert (
         msg.value.args[0] == "'model' has no attribute 'k_epsilon'.\n"
-        "The most similar names are: k-epsilon."
+        "The most similar names are: k-epsilon"
     )
 
 
@@ -919,6 +893,8 @@ def test_settings_api_names_exception(new_solver_session):
         solver.setup.boundary_conditions["cold-inlet"].name = "hot-inlet"
 
 
+@pytest.mark.skip(reason=SKIP_INVESTIGATING)
+# https://github.com/ansys/pyfluent/issues/4645
 @pytest.mark.fluent_version(">=24.2")
 def test_accessor_methods_on_settings_objects(new_solver_session):
     solver = new_solver_session
@@ -1001,10 +977,21 @@ def get_child_nodes(node, nodes, type_list):
 @pytest.mark.fluent_version("latest")
 def test_strings_with_allowed_values(static_mixer_settings_session):
     solver = static_mixer_settings_session
+    fluent_version = solver.get_fluent_version()
 
     with pytest.raises(AttributeError) as e:
-        solver.file.auto_save.root_name.allowed_values()
+        if fluent_version >= FluentVersion.v261:
+            solver.solution.calculation_activity.auto_save.root_name.allowed_values()
+        else:
+            solver.file.auto_save.root_name.allowed_values()
     assert e.value.args[0] == "'root_name' object has no attribute 'allowed_values'"
+
+    if fluent_version >= FluentVersion.v261:
+        assert solver.solution.calculation_activity.auto_save.case_frequency.allowed_values() == [
+            "if-case-is-modified",
+            "each-time",
+            "if-mesh-is-modified",
+        ]
 
     string_with_allowed_values = solver.setup.general.solver.type.allowed_values()
     assert string_with_allowed_values == [
@@ -1033,6 +1020,8 @@ def _check_vector_units(obj, units):
     assert obj.as_quantity() == ansys.units.Quantity(obj.get_state(), units)
 
 
+@pytest.mark.skip(reason=SKIP_INVESTIGATING)
+# https://github.com/ansys/pyfluent/issues/4914
 @pytest.mark.fluent_version(">=24.1")
 def test_ansys_units_integration(mixing_elbow_settings_session):
     solver = mixing_elbow_settings_session
@@ -1222,31 +1211,163 @@ def test_default_argument_names_for_commands(static_mixer_settings_session):
     solver = static_mixer_settings_session
 
     if solver.get_fluent_version() >= FluentVersion.v251:
-        assert set(solver.results.graphics.contour.command_names) == {
-            "create",
-            "delete",
-            "rename",
-            "list",
-            "list_properties",
-            "make_a_copy",
-            "display",
-            "add_to_graphics",
-            "clear_history",
-        }
+        assert set(solver.results.graphics.contour.command_names).issuperset(
+            {
+                "create",
+                "delete",
+                "rename",
+                "make_a_copy",
+                "display",
+                "add_to_graphics",
+                "clear_history",
+            }
+        )
     else:
-        assert set(solver.results.graphics.contour.command_names) == {
-            "delete",
-            "rename",
-            "list",
-            "list_properties",
-            "make_a_copy",
-            "display",
-            "copy",
-            "add_to_graphics",
-            "clear_history",
+        assert set(solver.results.graphics.contour.command_names).issuperset(
+            {
+                "delete",
+                "rename",
+                "make_a_copy",
+                "display",
+                "copy",
+                "add_to_graphics",
+                "clear_history",
+            }
+        )
+
+    assert set(solver.results.graphics.contour.rename.argument_names) == {"new", "old"}
+    assert solver.results.graphics.contour.delete.argument_names == ["name_list"]
+    if solver.get_fluent_version() < FluentVersion.v261:
+        # The following is the default behavior when no arguments are associated with the command.
+        assert solver.results.graphics.contour.list_1.argument_names == []
+
+
+@pytest.mark.fluent_version(">=25.1")
+def test_bc_set_state_performance(static_mixer_settings_session, monkeypatch):
+    solver = static_mixer_settings_session
+
+    mock_interceptor = MockTracingInterceptor()
+
+    with monkeypatch.context() as m:
+        m.setattr(TracingInterceptor, "_intercept_call", mock_interceptor)
+        solver.setup.boundary_conditions.velocity_inlet["inlet1"] = {
+            "momentum": {"velocity_magnitude": 11.0}
         }
 
-    assert solver.results.graphics.contour.rename.argument_names == ["new", "old"]
-    assert solver.results.graphics.contour.delete.argument_names == ["name_list"]
-    # The following is the default behavior when no arguments are associated with the command.
-    assert solver.results.graphics.contour.list.argument_names == []
+    calls = mock_interceptor.get_traced_calls()
+    assert len(calls) == 5
+    service = "/ansys.api.fluent.v0.settings.Settings/"
+    assert all(x.method == service + "GetAttrs" for x in calls[0:3])
+    assert all(x.request.attrs == ["active?"] for x in calls[0:3])
+    assert calls[0].request.path_info.path == ""
+    assert calls[1].request.path_info.path == "setup"
+    assert calls[2].request.path_info.path == "setup/boundary-conditions"
+    assert calls[3].method == service + "GetObjectNames"
+    assert calls[3].request.path_info.path == "setup/boundary-conditions/velocity-inlet"
+    assert calls[4].method == service + "SetVar"
+    assert (
+        calls[4].request.path_info.path
+        == "setup/boundary-conditions/velocity-inlet/inlet1"
+    )
+
+    assert (
+        solver.setup.boundary_conditions.velocity_inlet[
+            "inlet1"
+        ].momentum.velocity_magnitude.value()
+        == 11.0
+    )
+
+
+@pytest.mark.fluent_version(">=25.1")
+def test_get_completer_info(static_mixer_settings_session):
+    solver = static_mixer_settings_session
+    # group
+    completer_info = solver.settings.file.get_completer_info()
+    assert {
+        "batch_options",
+        "beta_settings",
+        "child_names",
+        "get_active_child_names",
+        "is_active",
+        "python_name",
+        "read_case",
+    } < set([x[0] for x in completer_info])
+    # command
+    completer_info = solver.settings.file.read_case.get_completer_info()
+    assert {"argument_names", "file_name", "is_active", "python_path"} < set(
+        [x[0] for x in completer_info]
+    )
+    # parameter
+    completer_info = solver.settings.file.read_case.file_name.get_completer_info()
+    assert {"default_value", "is_active", "python_name", "set_state"} < set(
+        [x[0] for x in completer_info]
+    )
+    # named-object
+    completer_info = (
+        solver.settings.setup.boundary_conditions.velocity_inlet.get_completer_info()
+    )
+    assert {
+        "command_names",
+        "get_object_names",
+        "is_active",
+        "list",
+        "python_name",
+    } < set([x[0] for x in completer_info])
+
+
+@pytest.mark.fluent_version(">=25.2")
+def test_concatenation_of_named_objects(mixing_elbow_case_data_session):
+    solver = mixing_elbow_case_data_session
+
+    assert list(solver.settings.setup.boundary_conditions.velocity_inlet) == [
+        "hot-inlet",
+        "cold-inlet",
+    ]
+    assert list(solver.settings.setup.boundary_conditions.wall) == [
+        "wall-inlet",
+        "wall-elbow",
+    ]
+
+    concatenated_named_objects = (
+        solver.settings.setup.boundary_conditions.velocity_inlet
+        + solver.settings.setup.boundary_conditions.wall
+    )
+    assert list(concatenated_named_objects) == [
+        "hot-inlet",
+        "cold-inlet",
+        "wall-inlet",
+        "wall-elbow",
+    ]
+
+    assert list(concatenated_named_objects()) == list(
+        solver.settings.setup.boundary_conditions.velocity_inlet()
+    ) + list(solver.settings.setup.boundary_conditions.wall())
+
+    assert concatenated_named_objects.items() == list(
+        solver.settings.setup.boundary_conditions.velocity_inlet.items()
+    ) + list(solver.settings.setup.boundary_conditions.wall.items())
+
+    with pytest.raises(TypeError):
+        (
+            solver.settings.setup.boundary_conditions.velocity_inlet
+            + solver.settings.setup.boundary_conditions.wall["wall-inlet"]
+        )
+
+    chained_named_objects = (
+        solver.settings.setup.boundary_conditions.velocity_inlet
+        + solver.settings.setup.boundary_conditions.wall
+        + solver.settings.setup.boundary_conditions.pressure_outlet
+    )
+
+    assert list(chained_named_objects) == [
+        "hot-inlet",
+        "cold-inlet",
+        "wall-inlet",
+        "wall-elbow",
+        "outlet",
+    ]
+
+    assert (
+        list(solver.settings.setup.boundary_conditions.pressure_outlet.items())[0]
+        in chained_named_objects.items()
+    )

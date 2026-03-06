@@ -100,12 +100,13 @@ all PyFluent packages in a Python *virtual environment*:
 
    For Python version information, see the answer to the next question.
 
-#. Install Fluent 2022 R2 or later.
+#. Install Fluent 2024 R2 or later.
+
 #. Set the environment variable for your installed release to point to
    the appropriate Ansys installation folder.
 
-   For example, for Ansys 2022 R2, you would likely set the ``AWP_ROOT222``
-   environment variable to point to ``C:\Program Files\ANSYS Inc\v222``.
+   For example, for Ansys 2025 R2, you would likely set the ``AWP_ROOT252``
+   environment variable to point to ``C:\Program Files\ANSYS Inc\v252``.
 
    While you must explicitly set this environment variable on Linux, it should
    be automatically set on Windows.
@@ -137,11 +138,15 @@ all PyFluent packages in a Python *virtual environment*:
       python -m pip install ansys-fluent-parametric   # Use Fluent’s parametric capabilities (optional)
       python -m pip install ansys-fluent-visualization   # Use Fluent's postprocessing capabilities with pyvista and matplotlib (optional)
 
+.. note::
+   Ansys Fluent versions prior to 2024 R2 were supported by PyFluent version 0.37 and earlier.
+   These versions are no longer supported in the current PyFluent releases.
+
 
 Which version of Python should you use?
 ---------------------------------------
-PyFluent supports Python 3.10 through Python 3.12 on Windows and Linux. Python
-3.10 is shipped with Ansys 2023 R2 and later. For example, in a 2025 R2 Windows
+PyFluent supports Python 3.10 through Python 3.13 on Windows and Linux. Python
+3.10 is shipped with Ansys 2024 R2 and later. For example, in a 2025 R2 Windows
 installation, the executable file Python 3.10 is typically located at:
 ``C:\Program Files\ANSYS Inc\v252\commonfiles\CPython\3_10\winx64\Release\python.exe``.
 If you're using Python from Ansys installation, make sure to install PyFluent
@@ -232,7 +237,7 @@ learn how to use PyFluent:
   script.
 
   .. note::
-     In Fluent 2022 R2, you can record a journal of your actions in Fluent
+     In Fluent 2024 R2 or later, you can record a journal of your actions in Fluent
      meshing to produce a Scheme script. Within that script are embedded
      Python statements corresponding to each recorded meshing workflow
      action. When extracted from the Scheme script, those Python statements
@@ -259,6 +264,20 @@ learn how to use PyFluent:
     in `JupyterLab <https://jupyter.org/>`_, press the tab key.
   - Standard Python or PyAnsys tooling to print options related to a specified
     object. For example, use ``dir (<object>)`` or ``help (<object>)``.
+
+
+How to set up JupyterLab to get a better code completion for the API code in PyFluent?
+--------------------------------------------------------------------------------------
+By default, JupyterLab ignores the static typing information provided by PyFluent
+and relies on dynamic lookup of the API for code completion. As the dynamic lookup
+generally involves gRPC calls to the Fluent server, it can be slow and often times out.
+To get a faster code completion experience based on the static typing information
+provided by PyFluent, you can install the JupyterLab extension
+`jupyterlab-lsp <https://jupyterlab-lsp.readthedocs.io/en/latest/>`_
+along with a Python language server like
+`python-lsp-server <https://github.com/python-lsp/python-lsp-server>`_
+within your JupyterLab environment .
+
 
 How do you get help for PyFluent?
 ---------------------------------

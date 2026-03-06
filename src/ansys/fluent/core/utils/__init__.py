@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -40,13 +40,6 @@ def load_module(module_name, file_path):
     spec.loader.exec_module(module)
     logger.info(f"Loaded module {module_name} from {file_path}")
     return module
-
-
-def get_examples_download_dir():
-    """Return the path to the examples download directory."""
-    parent_path = Path.home() / "Downloads"
-    parent_path.mkdir(exist_ok=True)
-    return parent_path / "ansys_fluent_core_examples"
 
 
 def get_user_data_dir():

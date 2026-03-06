@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -30,6 +30,7 @@ import shutil
 import zipfile
 
 import ansys.fluent.core as pyfluent
+from ansys.fluent.core._types import PathType
 from ansys.fluent.core.utils.networking import check_url_exists, get_url_content
 
 logger = logging.getLogger("pyfluent.networking")
@@ -49,42 +50,36 @@ def delete_downloads():
 
     Notes
     -----
-    The default examples path is given by ``pyfluent.EXAMPLES_PATH``.
+    The default examples path is given by ``pyfluent.config.examples_path``.
     """
-    shutil.rmtree(pyfluent.EXAMPLES_PATH)
-    os.makedirs(pyfluent.EXAMPLES_PATH)
+    shutil.rmtree(pyfluent.config.examples_path)
+    os.makedirs(pyfluent.config.examples_path)
 
 
 def _decompress(file_name: str) -> None:
     """Decompress zipped file."""
     zip_ref = zipfile.ZipFile(file_name, "r")
-    zip_ref.extractall(pyfluent.EXAMPLES_PATH)
+    zip_ref.extractall(pyfluent.config.examples_path)
     return zip_ref.close()
 
 
 def _get_file_url(file_name: str, directory: str | None = None) -> str:
     """Get file URL."""
     if directory:
-        return (
-            "https://github.com/ansys/example-data/raw/master/"
-            f"{directory}/{file_name}"
-        )
-    return f"https://github.com/ansys/example-data/raw/master/{file_name}"
+        return f"https://github.com/ansys/example-data/raw/main/{directory}/{file_name}"
+    return f"https://github.com/ansys/example-data/raw/main/{file_name}"
 
 
 def _retrieve_file(
     url: str,
     file_name: str,
-    save_path: str | None = None,
+    save_path: "PathType | None" = None,
     return_without_path: bool | None = False,
 ) -> str:
     """Download specified file from specified URL."""
     file_name = os.path.basename(file_name)
     if save_path is None:
-        save_path = os.getenv(
-            "PYFLUENT_CONTAINER_MOUNT_SOURCE",
-            pyfluent.CONTAINER_MOUNT_SOURCE or os.getcwd(),
-        )
+        save_path = pyfluent.config.container_mount_source or os.getcwd()
     else:
         save_path = os.path.abspath(save_path)
     local_path = os.path.join(save_path, file_name)
@@ -125,7 +120,7 @@ def _retrieve_file(
 def download_file(
     file_name: str,
     directory: str | None = None,
-    save_path: str | None = None,
+    save_path: "PathType | None" = None,
     return_without_path: bool | None = None,
 ) -> str:
     """Download specified example file from the Ansys example data repository.
@@ -140,7 +135,7 @@ def download_file(
     save_path : str, optional
         Path to download the specified file to.
     return_without_path : bool, optional
-        When unspecified, defaults to False, unless the PYFLUENT_LAUNCH_CONTAINER=1 environment variable is specified,
+        When unspecified, defaults to False, unless the launch_fluent_container config is set to True,
         in which case defaults to True.
         Relevant when using Fluent Docker container images, as the full path for the imported file from
         the host side is not necessarily going to be the same as the one for Fluent inside the container.
@@ -180,8 +175,8 @@ def download_file(
     'bracket.iges'
     """
     if return_without_path is None:
-        if os.getenv("PYFLUENT_LAUNCH_CONTAINER") == "1":
-            if pyfluent.USE_FILE_TRANSFER_SERVICE:
+        if pyfluent.config.launch_fluent_container:
+            if pyfluent.config.use_file_transfer_service:
                 return_without_path = False
             else:
                 return_without_path = True
@@ -212,7 +207,7 @@ def path(file_name: str):
     """
     if os.path.isabs(file_name):
         return file_name
-    file_path = Path(pyfluent.EXAMPLES_PATH) / file_name
+    file_path = Path(pyfluent.config.examples_path) / file_name
     if file_path.is_file():
         return str(file_path)
     else:

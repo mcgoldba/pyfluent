@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -29,25 +29,27 @@ from tempfile import TemporaryDirectory
 import pytest
 
 import ansys.fluent.core as pyfluent
-from ansys.fluent.core import PyFluentDeprecationWarning
+from ansys.fluent.core import PyFluentDeprecationWarning, PyFluentUserWarning
+from ansys.fluent.core.docker.utils import get_grpc_launcher_args_for_gh_runs
 from ansys.fluent.core.examples.downloads import download_file
 from ansys.fluent.core.exceptions import DisallowedValuesError, InvalidArgument
-from ansys.fluent.core.launcher import launcher_utils
 from ansys.fluent.core.launcher.error_handler import (
     GPUSolverSupportError,
     InvalidIpPort,
     LaunchFluentError,
-    _raise_non_gui_exception_in_windows,
 )
+from ansys.fluent.core.launcher.fluent_container import configure_container_dict
 from ansys.fluent.core.launcher.launch_options import (
     FluentLinuxGraphicsDriver,
     FluentMode,
     FluentWindowsGraphicsDriver,
     LaunchMode,
     UIMode,
+    _get_graphics_driver,
 )
 from ansys.fluent.core.launcher.launcher import create_launcher
 from ansys.fluent.core.launcher.launcher_utils import (
+    ComposeConfig,
     _build_journal_argument,
     is_windows,
 )
@@ -61,6 +63,7 @@ import ansys.platform.instancemanagement as pypim
 
 def test_gpu_version_error():
     with pytest.raises(GPUSolverSupportError):
+        grpc_kwds = get_grpc_launcher_args_for_gh_runs()
         pyfluent.launch_fluent(
             mode="meshing",
             dimension=2,
@@ -68,6 +71,7 @@ def test_gpu_version_error():
             processor_count=5,
             ui_mode="gui",
             gpu=True,
+            **grpc_kwds,
         )
         pyfluent.setup_for_fluent(
             mode="meshing",
@@ -76,6 +80,7 @@ def test_gpu_version_error():
             processor_count=5,
             ui_mode="gui",
             gpu=True,
+            **grpc_kwds,
         )
 
 
@@ -87,68 +92,115 @@ def test_mode():
         )
 
 
-@pytest.mark.standalone
 def test_unsuccessful_fluent_connection():
-    # start-timeout is intentionally provided to be 2s for the connection to fail
+    # start-timeout is intentionally provided to be 1s for the connection to fail
     with pytest.raises(LaunchFluentError) as ex:
-        pyfluent.launch_fluent(mode="solver", start_timeout=2)
+        grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+        pyfluent.launch_fluent(mode="solver", start_timeout=1, **grpc_kwds)
     # TimeoutError -> LaunchFluentError
     assert isinstance(ex.value.__context__, TimeoutError)
 
 
-@pytest.mark.fluent_version("<24.1")
-def test_non_gui_in_windows_throws_exception():
-    default_windows_flag = launcher_utils.is_windows()
-    launcher_utils.is_windows = lambda: True
-    try:
-        with pytest.raises(InvalidArgument):
-            _raise_non_gui_exception_in_windows(UIMode.NO_GUI, FluentVersion.v232)
-        with pytest.raises(InvalidArgument):
-            _raise_non_gui_exception_in_windows(UIMode.NO_GUI, FluentVersion.v231)
-        with pytest.raises(InvalidArgument):
-            _raise_non_gui_exception_in_windows(UIMode.NO_GUI, FluentVersion.v222)
-        with pytest.raises(InvalidArgument):
-            _raise_non_gui_exception_in_windows(
-                UIMode.NO_GUI_OR_GRAPHICS, FluentVersion.v232
-            )
-        with pytest.raises(InvalidArgument):
-            _raise_non_gui_exception_in_windows(
-                UIMode.NO_GUI_OR_GRAPHICS, FluentVersion.v231
-            )
-        with pytest.raises(InvalidArgument):
-            _raise_non_gui_exception_in_windows(
-                UIMode.NO_GUI_OR_GRAPHICS, FluentVersion.v222
-            )
-    finally:
-        launcher_utils.is_windows = lambda: default_windows_flag
+def test_container_timeout_deprecation():
+    with pytest.warns(PyFluentDeprecationWarning):
+        configure_container_dict([], timeout=0)
+
+    with pytest.warns(PyFluentDeprecationWarning):
+        grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+        pyfluent.launch_fluent(
+            start_container=True,
+            container_dict=dict(timeout=0),
+            dry_run=True,
+            **grpc_kwds,
+        )
 
 
-@pytest.mark.fluent_version(">=24.1")
-def test_non_gui_in_windows_does_not_throw_exception():
-    default_windows_flag = launcher_utils.is_windows()
-    launcher_utils.is_windows = lambda: True
-    try:
-        _raise_non_gui_exception_in_windows(UIMode.NO_GUI, FluentVersion.v241)
-        _raise_non_gui_exception_in_windows(
-            UIMode.NO_GUI_OR_GRAPHICS, FluentVersion.v241
-        )
-        _raise_non_gui_exception_in_windows(UIMode.NO_GUI, FluentVersion.v242)
-        _raise_non_gui_exception_in_windows(
-            UIMode.NO_GUI_OR_GRAPHICS, FluentVersion.v242
-        )
-    finally:
-        launcher_utils.is_windows = lambda: default_windows_flag
+def test_container_timeout_deprecation_override(caplog):
+    # timeout should override start_timeout
+    with pytest.raises(LaunchFluentError) as ex:
+        with pytest.warns(PyFluentDeprecationWarning):
+            grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+            pyfluent.launch_fluent(
+                start_container=True,
+                container_dict=dict(timeout=1),
+                start_timeout=60,
+                **grpc_kwds,
+            )
+    assert isinstance(ex.value.__context__, TimeoutError)
+    assert "overridden" in caplog.text
 
 
 def test_container_launcher():
     # test dry_run
-    container_dict = pyfluent.launch_fluent(start_container=True, dry_run=True)
+    grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+    container_dict = pyfluent.launch_fluent(
+        start_container=True, dry_run=True, **grpc_kwds
+    )
     assert isinstance(container_dict, dict)
     assert len(container_dict) > 1
 
     # test run with configuration dict
-    session = pyfluent.launch_fluent(container_dict=container_dict)
-    assert session.is_server_healthy()
+    session = pyfluent.launch_fluent(container_dict=container_dict, **grpc_kwds)
+    assert session.is_active()
+
+
+def test_container_working_dir():
+    pyfluent.config.container_mount_source = None
+
+    grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+    container_dict = pyfluent.launch_fluent(
+        start_container=True, dry_run=True, **grpc_kwds
+    )
+    assert container_dict["volumes"][0].startswith(os.getcwd())
+    assert container_dict["volumes"][0].endswith(pyfluent.config.container_mount_target)
+    assert container_dict["working_dir"] == pyfluent.config.container_mount_target
+    server_info_matches = [
+        arg
+        for arg in container_dict["command"]
+        if arg.startswith(
+            f"-sifile={pyfluent.config.container_mount_target}/serverinfo"
+        )
+    ]
+    assert len(server_info_matches) == 1, "Expected one server info file in command"
+
+    target_mount1 = "/mnt/test1"
+    container_dict.update(working_dir=target_mount1)
+    container_dict2 = pyfluent.launch_fluent(
+        container_dict=container_dict, dry_run=True, **grpc_kwds
+    )
+    del container_dict
+    assert container_dict2["volumes"][0].startswith(os.getcwd())
+    assert container_dict2["volumes"][0].endswith(target_mount1)
+    assert container_dict2["working_dir"] == target_mount1
+    server_info_matches2 = [
+        arg
+        for arg in container_dict2["command"]
+        if arg.startswith(f"-sifile={target_mount1}/serverinfo")
+    ]
+    assert len(server_info_matches2) == 1, "Expected one server info file in command"
+
+    target_mount2 = "/mnt/test2"
+    container_dict2.update(
+        volumes=[f"{pyfluent.config.examples_path}:{target_mount2}"],
+        working_dir=target_mount2,
+    )
+    container_dict3 = pyfluent.launch_fluent(
+        container_dict=container_dict2, dry_run=True, **grpc_kwds
+    )
+    del container_dict2
+    assert container_dict3["volumes"][0].startswith(pyfluent.config.examples_path)
+    assert container_dict3["volumes"][0].endswith(target_mount2)
+    assert container_dict3["working_dir"] == target_mount2
+    server_info_matches3 = [
+        arg
+        for arg in container_dict3["command"]
+        if arg.startswith(f"-sifile={target_mount2}/serverinfo")
+    ]
+    assert len(server_info_matches3) == 1, "Expected one server info file in command"
+
+    # after all these 'working_dir' changes, the container should still launch
+    session = pyfluent.launch_fluent(container_dict=container_dict3, **grpc_kwds)
+    assert session.is_active()
 
 
 @pytest.mark.standalone
@@ -162,9 +214,6 @@ def test_case_load():
 
     # Case loaded
     assert session.setup.boundary_conditions.is_active()
-    # Mesh available because not lightweight
-    if not session.get_fluent_version() < FluentVersion.v231:
-        assert session.mesh.quality.is_active()
     # Data not loaded
     assert not session.fields.field_data.is_data_valid()
 
@@ -207,9 +256,6 @@ def test_case_data_load():
 
     # Case loaded
     assert session.setup.boundary_conditions.is_active()
-    # Mesh available because not lightweight
-    if not session.get_fluent_version() < FluentVersion.v231:
-        assert session.mesh.quality.is_active()
     # Data loaded
     assert session.fields.field_data.is_data_valid()
 
@@ -287,10 +333,10 @@ def test_get_fluent_exe_path_from_awp_root(fluent_version, helpers, fs):
 def test_get_fluent_exe_path_from_product_version_launcher_arg(helpers):
     helpers.mock_awp_vars()
     if platform.system() == "Windows":
-        expected_path = Path("ansys_inc/v231/fluent") / "ntbin" / "win64" / "fluent.exe"
+        expected_path = Path("ansys_inc/v251/fluent") / "ntbin" / "win64" / "fluent.exe"
     else:
-        expected_path = Path("ansys_inc/v231/fluent") / "bin" / "fluent"
-    assert get_fluent_exe_path(product_version=231) == expected_path
+        expected_path = Path("ansys_inc/v251/fluent") / "bin" / "fluent"
+    assert get_fluent_exe_path(product_version=251) == expected_path
 
 
 def test_get_fluent_exe_path_from_pyfluent_fluent_root(helpers, monkeypatch):
@@ -303,9 +349,11 @@ def test_get_fluent_exe_path_from_pyfluent_fluent_root(helpers, monkeypatch):
     assert get_fluent_exe_path() == expected_path
 
 
+@pytest.mark.fluent_version(">=25.1")  # Cannot use insecure_mode of 24.2 image
 def test_watchdog_launch(monkeypatch):
-    monkeypatch.setenv("PYFLUENT_WATCHDOG_EXCEPTION_ON_ERROR", "1")
-    pyfluent.launch_fluent(start_watchdog=True)
+    monkeypatch.setattr(pyfluent.config, "watchdog_exception_on_error", True)
+    kwargs = get_grpc_launcher_args_for_gh_runs()
+    pyfluent.launch_fluent(start_watchdog=True, **kwargs)
 
 
 @pytest.mark.standalone
@@ -336,6 +384,7 @@ def test_create_standalone_launcher():
 
 
 def test_fluent_launchers():
+    grpc_kwds = get_grpc_launcher_args_for_gh_runs()
     kwargs = dict(
         ui_mode=UIMode.NO_GUI,
         graphics_driver=(
@@ -343,6 +392,7 @@ def test_fluent_launchers():
             if is_windows()
             else FluentLinuxGraphicsDriver.AUTO
         ),
+        **grpc_kwds,
     )
     kargs = dict(
         ui_mode=kwargs["ui_mode"],
@@ -360,6 +410,7 @@ def test_fluent_launchers():
         gpu=None,
         start_watchdog=None,
         file_transfer_service=None,
+        **grpc_kwds,
     )
     container_meshing_launcher = create_launcher(
         LaunchMode.CONTAINER,
@@ -387,12 +438,17 @@ def test_fluent_launchers():
         assert pim_meshing_session
         pim_meshing_session.exit()
 
-        pim_solver_launcher = create_launcher(
-            LaunchMode.PIM, mode=FluentMode.SOLVER, **kwargs
-        )
+        pim_solver_launcher = create_launcher(LaunchMode.PIM, **kwargs, dimension=2)
         pim_solver_session = pim_solver_launcher()
         assert pim_solver_session
         pim_solver_session.exit()
+
+        two_d_pim_meshing_launcher = create_launcher(
+            LaunchMode.PIM, mode=FluentMode.MESHING, **kwargs, dimension=2
+        )
+        two_d_pim_meshing_session = two_d_pim_meshing_launcher()
+        assert two_d_pim_meshing_session.dimension == pyfluent.Dimension.TWO
+        two_d_pim_meshing_session.exit()
 
 
 @pytest.mark.parametrize(
@@ -420,7 +476,8 @@ def test_build_journal_argument(topy, journal_file_names, result, raises):
 
 def test_show_gui_raises_warning():
     with pytest.warns(PyFluentDeprecationWarning):
-        solver = pyfluent.launch_fluent(show_gui=True)
+        grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+        solver = pyfluent.launch_fluent(show_gui=True, **grpc_kwds)
         solver.exit()
 
 
@@ -477,7 +534,8 @@ def test_processor_count():
     def get_processor_count(solver):
         return int(solver.rp_vars("parallel/nprocs_string").strip('"'))
 
-    with pyfluent.launch_fluent(processor_count=2) as solver:
+    grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+    with pyfluent.launch_fluent(processor_count=2, **grpc_kwds) as solver:
         assert get_processor_count(solver) == 2
     # The following check is not yet supported for container launch
     # https://github.com/ansys/pyfluent/issues/2624
@@ -485,30 +543,36 @@ def test_processor_count():
     #     assert get_processor_count(solver) == 2
 
 
-def test_container_warning_for_mount_source(caplog):
+def test_container_mount_source_target(caplog):
     container_dict = {
         "mount_source": os.getcwd(),
         "mount_target": "/mnt/pyfluent/tests",
     }
-    _ = pyfluent.launch_fluent(container_dict=container_dict)
+    grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+    session = pyfluent.launch_fluent(container_dict=container_dict, **grpc_kwds)
+    assert session.is_active()
     assert container_dict["mount_source"] in caplog.text
     assert container_dict["mount_target"] in caplog.text
 
 
-# runs only in container till cwd is supported for container launch
 def test_fluent_automatic_transcript(monkeypatch):
+    grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+    with TemporaryDirectory(dir=pyfluent.config.examples_path) as tmp_dir:
+        with pyfluent.launch_fluent(
+            container_dict=dict(mount_source=tmp_dir), **grpc_kwds
+        ):
+            assert list(Path(tmp_dir).glob("*.trn"))
     with monkeypatch.context() as m:
-        m.setattr(pyfluent, "FLUENT_AUTOMATIC_TRANSCRIPT", True)
-        with TemporaryDirectory(dir=pyfluent.EXAMPLES_PATH) as tmp_dir:
-            with pyfluent.launch_fluent(container_dict=dict(working_dir=tmp_dir)):
-                assert list(Path(tmp_dir).glob("*.trn"))
-    with TemporaryDirectory(dir=pyfluent.EXAMPLES_PATH) as tmp_dir:
-        with pyfluent.launch_fluent(container_dict=dict(working_dir=tmp_dir)):
-            assert not list(Path(tmp_dir).glob("*.trn"))
+        m.setattr(pyfluent.config, "fluent_automatic_transcript", False)
+        with TemporaryDirectory(dir=pyfluent.config.examples_path) as tmp_dir:
+            with pyfluent.launch_fluent(
+                container_dict=dict(mount_source=tmp_dir), **grpc_kwds
+            ):
+                assert not list(Path(tmp_dir).glob("*.trn"))
 
 
 def test_standalone_launcher_dry_run(monkeypatch):
-    monkeypatch.setenv("PYFLUENT_LAUNCH_CONTAINER", "0")
+    monkeypatch.setattr(pyfluent.config, "launch_fluent_container", False)
     fluent_path = r"\x\y\z\fluent.exe"
     fluent_launch_string, server_info_file_name = pyfluent.launch_fluent(
         fluent_path=fluent_path, dry_run=True, ui_mode="no_gui"
@@ -516,14 +580,14 @@ def test_standalone_launcher_dry_run(monkeypatch):
     assert str(Path(server_info_file_name).parent) == tempfile.gettempdir()
     assert (
         fluent_launch_string
-        == f"{fluent_path} 3ddp -gu -sifile={server_info_file_name} -nm"
+        == f"{fluent_path} 3ddp -gu -driver null -sifile={server_info_file_name} -nm"
     )
 
 
 def test_standalone_launcher_dry_run_with_server_info_dir(monkeypatch):
-    monkeypatch.setenv("PYFLUENT_LAUNCH_CONTAINER", "0")
+    monkeypatch.setattr(pyfluent.config, "launch_fluent_container", False)
     with tempfile.TemporaryDirectory() as tmp_dir:
-        monkeypatch.setenv("SERVER_INFO_DIR", tmp_dir)
+        monkeypatch.setattr(pyfluent.config, "fluent_server_info_dir", tmp_dir)
         fluent_path = r"\x\y\z\fluent.exe"
         fluent_launch_string, server_info_file_name = pyfluent.launch_fluent(
             fluent_path=fluent_path, dry_run=True, ui_mode="no_gui"
@@ -531,13 +595,14 @@ def test_standalone_launcher_dry_run_with_server_info_dir(monkeypatch):
         assert str(Path(server_info_file_name).parent) == tmp_dir
         assert (
             fluent_launch_string
-            == f"{fluent_path} 3ddp -gu -sifile={Path(server_info_file_name).name} -nm"
+            == f"{fluent_path} 3ddp -gu -driver null -sifile={Path(server_info_file_name).name} -nm"
         )
 
 
 def test_container_ports():
     container_dict = {"ports": {"5000": 5000, "5001": 5001}}
-    with pyfluent.launch_fluent(container_dict=container_dict) as session:
+    grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+    with pyfluent.launch_fluent(container_dict=container_dict, **grpc_kwds) as session:
         session._container.reload()
         assert len(session._container.ports) == 2
 
@@ -548,7 +613,10 @@ def test_correct_ip_port():
 
 
 def test_container_launcher_args():
-    container_dict = pyfluent.launch_fluent(start_container=True, dry_run=True)
+    grpc_kwds = get_grpc_launcher_args_for_gh_runs()
+    container_dict = pyfluent.launch_fluent(
+        start_container=True, dry_run=True, **grpc_kwds
+    )
     commands = container_dict["command"]
     graphics_args = ["-gu", "-hidden", "-g", "-gr"]
     graphics_arg_count = 0
@@ -559,7 +627,7 @@ def test_container_launcher_args():
 
 def test_report():
     from ansys.fluent.core.report import ANSYS_ENV_VARS, dependencies
-    from ansys.tools.report import Report
+    from ansys.tools.common.report import Report
 
     rep = Report(ansys_libs=dependencies, ansys_vars=ANSYS_ENV_VARS)
     assert "PyAnsys Software and Environment Report" in str(rep)
@@ -568,7 +636,6 @@ def test_report():
 
 @pytest.mark.fluent_version(">=23.1")
 def test_docker_compose(monkeypatch):
-    monkeypatch.setenv("PYFLUENT_USE_DOCKER_COMPOSE", "1")
     import ansys.fluent.core as pyfluent
     from ansys.fluent.core import examples
     from ansys.fluent.core.utils.networking import get_free_port
@@ -576,10 +643,124 @@ def test_docker_compose(monkeypatch):
     port_1 = get_free_port()
     port_2 = get_free_port()
     container_dict = {"ports": {f"{port_1}": port_1, f"{port_2}": port_2}}
-    solver = pyfluent.launch_fluent(container_dict=container_dict)
+    solver = pyfluent.launch_fluent(
+        container_dict=container_dict, use_docker_compose=True, insecure_mode=True
+    )
     assert len(solver._container.ports) == 2
     case_file_name = examples.download_file(
         "mixing_elbow.cas.h5", "pyfluent/mixing_elbow"
     )
     solver.file.read_case(file_name=case_file_name)
     solver.exit()
+
+
+@pytest.mark.standalone
+def test_respect_driver_is_not_null_in_windows():
+    driver = _get_graphics_driver(
+        graphics_driver=FluentWindowsGraphicsDriver.DX11, ui_mode=UIMode.GUI
+    )
+    assert driver == FluentWindowsGraphicsDriver.DX11
+
+    driver = _get_graphics_driver(
+        graphics_driver=FluentWindowsGraphicsDriver.OPENGL, ui_mode=UIMode.HIDDEN_GUI
+    )
+    assert driver == FluentWindowsGraphicsDriver.OPENGL
+
+
+def test_respect_driver_is_not_null_in_linux():
+    driver = _get_graphics_driver(
+        graphics_driver=FluentLinuxGraphicsDriver.X11, ui_mode=UIMode.GUI
+    )
+    assert driver == FluentLinuxGraphicsDriver.X11
+
+    driver = _get_graphics_driver(
+        graphics_driver=FluentLinuxGraphicsDriver.OPENGL, ui_mode=UIMode.HIDDEN_GUI
+    )
+    assert driver == FluentLinuxGraphicsDriver.OPENGL
+
+
+@pytest.mark.standalone
+def test_warning_in_windows():
+    with pytest.warns(PyFluentUserWarning):
+        driver = _get_graphics_driver(
+            graphics_driver=FluentWindowsGraphicsDriver.DX11, ui_mode=UIMode.NO_GUI
+        )
+        assert driver == FluentWindowsGraphicsDriver.NULL
+
+    with pytest.warns(PyFluentUserWarning):
+        driver = _get_graphics_driver(
+            graphics_driver=FluentWindowsGraphicsDriver.AUTO, ui_mode=UIMode.NO_GRAPHICS
+        )
+        assert driver == FluentWindowsGraphicsDriver.NULL
+
+    with pytest.warns(PyFluentUserWarning):
+        driver = _get_graphics_driver(
+            graphics_driver=FluentWindowsGraphicsDriver.AUTO,
+            ui_mode=UIMode.NO_GUI_OR_GRAPHICS,
+        )
+        assert driver == FluentWindowsGraphicsDriver.NULL
+
+
+def test_warning_in_linux():
+    with pytest.warns(PyFluentUserWarning):
+        driver = _get_graphics_driver(
+            graphics_driver=FluentLinuxGraphicsDriver.X11, ui_mode=UIMode.NO_GUI
+        )
+        assert driver == FluentLinuxGraphicsDriver.NULL
+
+    with pytest.warns(PyFluentUserWarning):
+        driver = _get_graphics_driver(
+            graphics_driver=FluentLinuxGraphicsDriver.AUTO, ui_mode=UIMode.NO_GRAPHICS
+        )
+        assert driver == FluentLinuxGraphicsDriver.NULL
+
+    with pytest.warns(PyFluentUserWarning):
+        driver = _get_graphics_driver(
+            graphics_driver=FluentLinuxGraphicsDriver.AUTO,
+            ui_mode=UIMode.NO_GUI_OR_GRAPHICS,
+        )
+        assert driver == FluentLinuxGraphicsDriver.NULL
+
+
+def test_no_warning_for_none_values(caplog):
+    driver = _get_graphics_driver(graphics_driver=None, ui_mode=None)  # noqa: F841
+    assert "PyFluentUserWarning" not in caplog.text
+    caplog.clear()
+
+
+def test_error_for_selecting_both_compose_sources():
+    with pytest.raises(ValueError):
+        pyfluent.launch_fluent(use_docker_compose=True, use_podman_compose=True)
+
+
+def test_warning_for_deprecated_compose_env_vars(monkeypatch):
+    monkeypatch.setattr(pyfluent.config, "use_docker_compose", True)
+    with pytest.warns(PyFluentDeprecationWarning):
+        ComposeConfig()
+
+    monkeypatch.setattr(pyfluent.config, "use_podman_compose", True)
+    with pytest.warns(PyFluentDeprecationWarning):
+        ComposeConfig()
+
+
+@pytest.mark.standalone
+@pytest.mark.fluent_version(">=25.1")
+def test_default_launch_mode_is_py():
+    fluent_launch_string, _ = pyfluent.launch_fluent(dry_run=True)
+    assert "-py" in fluent_launch_string
+
+
+@pytest.mark.standalone
+def test_create_launcher():
+    from ansys.fluent.core.launcher import create_launcher
+    from ansys.fluent.core.launcher.launch_options import LaunchMode
+    from ansys.fluent.core.launcher.standalone_launcher import StandaloneLauncher
+
+    with pytest.raises(DisallowedValuesError):
+        create_launcher("unknown_mode")
+
+    session = create_launcher()
+    assert isinstance(session, StandaloneLauncher)
+
+    session = create_launcher(LaunchMode.STANDALONE)
+    assert isinstance(session, StandaloneLauncher)

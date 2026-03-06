@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -62,27 +62,47 @@ Examples
 >>> # condition surfaces of the given solver
 >>> reduction.area_average(
 ...     expr = "AbsolutePressure",
-...     locations = solver.setup.boundary_conditions.velocity_inlet
+...     locations = solver.settings.setup.boundary_conditions.velocity_inlet
 ... )
 10623.0
 
 >>> from ansys.fluent.core.solver.function import reduction
 >>> # Compute the minimum of the square of velocity magnitude
 >>> # for all pressure outlets across two solvers
->>> named_exprs = solver1.setup.named_expressions
+>>> named_exprs = solver1.settings.setup.named_expressions
 >>> vsquared = named_exprs["vsquared"] = {}
 >>> vsquared.definition = "VelocityMagnitude ** 2"
 >>> reduction.minimum(
 ...     expr = vsquared,
-...     locations = [
-...         solver1.setup.boundary_conditions.pressure_outlet,
-...         solver2.setup.boundary_conditions.pressure_outlet
-...     ])
+...     locations = solver1.settings.setup.boundary_conditions.pressure_outlet
+...     + solver2.settings.setup.boundary_conditions.pressure_outlet
+...     )
 19.28151
 """
 
+from collections.abc import Iterable
+from enum import Enum
+
 import numpy as np
 from numpy import array
+
+from ansys.fluent.core.exceptions import DisallowedValuesError
+from ansys.fluent.core.variable_strategies import (
+    FluentExprNamingStrategy as naming_strategy,
+)
+
+
+class Weight(Enum):
+    """Weight for sum."""
+
+    AREA = "Area"
+    VOLUME = "Volume"
+    MASS = "Mass"
+    MASS_FLOW_RATE = "MassFlowRate"
+    ABS_MASS_FLOW_RATE = "AbsMassFlowRate"
+
+    def __str__(self):
+        return self.value
 
 
 class BadReductionRequest(Exception):
@@ -117,7 +137,12 @@ def _locn_name_and_obj(locn, locns):
 def _locn_names_and_objs(locns):
     if _is_iterable(locns):
         names_and_objs = []
+        if locns.__class__.__name__ == "CombinedNamedObject":
+            return locns.items()
+
         for locn in locns:
+            if isinstance(locn, Iterable) and not isinstance(locn, (str, bytes)):
+                raise DisallowedValuesError("location", locn, list(locn))
             name_and_obj = _locn_name_and_obj(locn, locns)
             if _is_iterable(name_and_obj):
                 if isinstance(name_and_obj[0], str):
@@ -187,7 +212,9 @@ def _eval_reduction(
         weight = "Weight=" + str(weight)
         locations = str(locations) + ", " + weight
 
-    expr_str = _expr_to_expr_str(expr)
+    if hasattr(expr, "definition"):
+        expr = expr.definition()
+    expr_str = _expr_to_expr_str(naming_strategy().to_string(expr))
     if condition:
         expr_str = expr_str + ", " + condition
     return _eval_expr(
@@ -289,6 +316,10 @@ def _limit(limit, expr, locations, ctxt):
         )
         limit_val = val if limit_val is None else limit(val, limit_val)
     return limit_val
+
+
+# Weight for sum
+weight = Weight
 
 
 def area_average(expression, locations, ctxt=None):
@@ -579,14 +610,14 @@ def mass_flow(locations, ctxt=None):
     return _extent("MassFlow", locations, ctxt)
 
 
-def sum(expression, locations, weight, ctxt=None):
+def sum(expression, locations, weight: str | Weight, ctxt=None):
     """Compute the sum of the specified expression over the specified locations.
 
     Parameters
     ----------
     expression : Any
     locations : Any
-    weight: str
+    weight: str | Weight
     ctxt : Any, optional
     Returns
     -------
@@ -595,7 +626,7 @@ def sum(expression, locations, weight, ctxt=None):
     return _extent_expression("Sum", "Sum", expression, locations, ctxt, weight=weight)
 
 
-def sum_if(expression, condition, locations, weight, ctxt=None):
+def sum_if(expression, condition, locations, weight: str | Weight, ctxt=None):
     """Compute the sum of the specified expression over the specified locations if a
     condition is satisfied.
 
@@ -604,7 +635,7 @@ def sum_if(expression, condition, locations, weight, ctxt=None):
     expression : Any
     condition: str
     locations : Any
-    weight: str
+    weight: str | Weight
     ctxt : Any, optional
     Returns
     -------

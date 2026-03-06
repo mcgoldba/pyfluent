@@ -1,4 +1,12 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# /// script
+# dependencies = [
+#   "ansys-fluent-core",
+#   "ansys-fluent-visualization",
+#   "matplotlib",
+# ]
+# ///
+
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -42,16 +50,18 @@ This example demonstrates:
 # ==================================================================================
 
 import csv
+import os
 
 import matplotlib.pyplot as plt
 
 import ansys.fluent.core as pyfluent
 from ansys.fluent.core import examples
-import ansys.fluent.visualization.pyvista as pv
+from ansys.fluent.visualization import Contour, GraphicsWindow
 
 import_filename = examples.download_file(
     "brake.msh.h5",
     "pyfluent/examples/Brake-Thermal-PyVista-Matplotlib",
+    save_path=os.getcwd(),
 )
 
 ####################################################################################
@@ -62,7 +72,7 @@ import_filename = examples.download_file(
 # Launch Fluent session with solver mode and print Fluent version
 # ---------------------------------------------------------------
 
-session = pyfluent.launch_fluent(precision="double", processor_count=2, version="3d")
+session = pyfluent.launch_fluent(precision="double", processor_count=2, dimension=3)
 print(session.get_fluent_version())
 
 ####################################################################################
@@ -291,27 +301,9 @@ session.settings.file.write(file_type="case-data", file_name="brake-final.cas.h5
 # ===============================================
 
 ###############################################
-# Create a graphics session
-# -------------------------
-graphics_session1 = pv.Graphics(session)
-
-###############################################
 # Temperature contour object
 # --------------------------
-contour1 = graphics_session1.Contours["temperature"]
-
-###############################################
-# Check available options for contour object
-# -------------------------------------------
-
-contour1()
-
-###############################################
-# Set contour properties
-# ----------------------
-
-contour1.field = "temperature"
-contour1.surfaces = [
+contour1_surfaces = [
     "wall-disc1",
     "wall-disc2",
     "wall-pad-disc2",
@@ -321,8 +313,13 @@ contour1.surfaces = [
     "wall-geom-1-innerpad",
     "wall-geom-1-outerpad",
 ]
+contour1 = Contour(solver=session, field="temperature", surfaces=contour1_surfaces)
+
+###############################################
+# Set contour properties
+# ----------------------
+
 contour1.range.option = "auto-range-off"
-contour1()
 contour1.range.auto_range_off.minimum = 300
 contour1.range.auto_range_off.maximum = 400
 
@@ -330,7 +327,9 @@ contour1.range.auto_range_off.maximum = 400
 # Display contour
 # ---------------
 
-contour1.display()
+window = GraphicsWindow()
+window.add_graphics(contour1)
+window.show()
 
 # %%
 # .. image:: ../../_static/brake_surface_temperature.png
@@ -352,7 +351,7 @@ X = []
 Y = []
 Z = []
 i = -1
-with open("max-temperature.out", "r") as datafile:
+with open(os.path.join(os.getcwd(), "max-temperature.out"), "r") as datafile:
     plotting = csv.reader(datafile, delimiter=" ")
     for rows in plotting:
         i = i + 1

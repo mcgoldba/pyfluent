@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -80,7 +80,9 @@ class HealthCheckService:
         """
         request = HealthCheckModule.HealthCheckRequest()
         response = self._stub.Check(
-            request, metadata=self._metadata, timeout=pyfluent.CHECK_HEALTH_TIMEOUT
+            request,
+            metadata=self._metadata,
+            timeout=pyfluent.config.check_health_timeout,
         )
         return HealthCheckService.Status(response.status)
 

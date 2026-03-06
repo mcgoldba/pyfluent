@@ -1,6 +1,6 @@
 """Launch Fluent through docker compose."""
 
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -26,24 +26,29 @@ import os
 import subprocess
 import uuid
 
+from .utils import get_ghcr_fluent_image_name
+
 
 class ComposeBasedLauncher:
     """Launch Fluent through docker or Podman compose."""
 
-    def __init__(self, *, container_dict):
+    def __init__(self, compose_config, container_dict, container_server_info_file):
+        from ansys.fluent.core import config
+
+        self._compose_config = compose_config
         self._compose_name = f"pyfluent_compose_{uuid.uuid4().hex}"
         self._container_dict = container_dict
+        image_tag = config.fluent_image_tag
         self._image_name = (
             container_dict.get("fluent_image")
-            or f"ghcr.io/ansys/pyfluent:{os.getenv('FLUENT_IMAGE_TAG')}"
+            or f"{get_ghcr_fluent_image_name(image_tag)}:{image_tag}"
         )
         self._container_source = self._set_compose_cmds()
         self._container_source.remove("compose")
 
-        self._compose_file = self._get_compose_file(container_dict)
+        self._container_server_info_file = container_server_info_file
 
-    def _is_podman_selected(self):
-        return os.getenv("PYFLUENT_USE_PODMAN_COMPOSE") == "1"
+        self._compose_file = self._get_compose_file(container_dict)
 
     def _get_compose_file(self, container_dict):
         """Generates compose file for the Docker Compose setup.
@@ -129,14 +134,14 @@ class ComposeBasedLauncher:
         """
 
         # Determine the compose command
-        if os.getenv("PYFLUENT_USE_PODMAN_COMPOSE") == "1":
+        if self._compose_config.use_podman_compose:
             self._compose_cmds = (
                 ["sudo", "podman", "compose"]
                 if hasattr(self, "_container_source")
                 and "sudo" in self._container_source
                 else ["podman", "compose"]
             )
-        elif os.getenv("PYFLUENT_USE_DOCKER_COMPOSE") == "1":
+        elif self._compose_config.use_docker_compose:
             self._compose_cmds = ["docker", "compose"]
         else:
             raise RuntimeError("Neither Docker nor Podman is specified.")
@@ -148,7 +153,7 @@ class ComposeBasedLauncher:
         try:
             cmd = self._container_source + ["images", "-q", self._image_name]
             # Podman users do not always configure rootless mode in /etc/subuids and /etc/subgids
-            if self._is_podman_selected():
+            if self._compose_config.use_podman_compose:
                 sudo_cmd = ["sudo"] + cmd
                 output_1 = subprocess.check_output(cmd)
                 output_2 = subprocess.check_output(sudo_cmd)
@@ -241,3 +246,29 @@ class ComposeBasedLauncher:
             self._container_source + ["port", f"{self._compose_name}-fluent-1"],
         )
         return self._extract_ports(output.decode("utf-8").strip())
+
+    def chown_server_info_file(self) -> None:
+        """Change ownership of the server info file inside the container.
+
+        Raises
+        ------
+        RuntimeError
+            If the command fails.
+        """
+        result = subprocess.run(
+            self._container_source
+            + [
+                "exec",
+                f"{self._compose_name}-fluent-1",
+                "chown",
+                f"{os.getuid()}:{os.getgid()}",
+                self._container_server_info_file,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to change ownership of the server info file. "
+                f"Error: {result.stderr.strip()}"
+            )

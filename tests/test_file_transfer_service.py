@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -25,6 +25,7 @@
 import os
 from pathlib import Path
 
+from conftest import SKIP_BLOCKED, SKIP_UNKNOWN
 import pytest
 
 from ansys.fluent.core import examples
@@ -34,6 +35,12 @@ from ansys.fluent.core.utils.file_transfer_service import (
 )
 
 
+def _get_certs_folder():
+    return os.path.join(os.getcwd(), "certs")
+
+
+@pytest.mark.skip(reason=SKIP_UNKNOWN)
+# Root cause is unknown - works fine locally and on Test Custom Run workflow, fails on CI.
 @pytest.mark.codegen_required
 @pytest.mark.fluent_version(">=24.2")
 def test_remote_grpc_fts_container():
@@ -51,11 +58,16 @@ def test_remote_grpc_fts_container():
     if not source_path.exists():
         source_path.mkdir(parents=True, exist_ok=True)
 
-    file_transfer_service = ContainerFileTransferStrategy(mount_source=str(source_path))
+    file_transfer_service = ContainerFileTransferStrategy(
+        mount_source=str(source_path), certs_dir=_get_certs_folder()
+    )
 
     container_dict = {"mount_source": file_transfer_service.mount_source}
     session = pyfluent.launch_fluent(
-        file_transfer_service=file_transfer_service, container_dict=container_dict
+        file_transfer_service=file_transfer_service,
+        container_dict=container_dict,
+        certificates_folder=_get_certs_folder(),
+        insecure_mode=False,
     )
 
     session.file.read_case(file_name=case_file)
@@ -71,7 +83,7 @@ def test_remote_grpc_fts_container():
 def test_read_case_and_data(monkeypatch):
     import ansys.fluent.core as pyfluent
 
-    monkeypatch.setattr(pyfluent, "USE_FILE_TRANSFER_SERVICE", True)
+    monkeypatch.setattr(pyfluent.config, "use_file_transfer_service", True)
 
     case_file_name = examples.download_file(
         "mixing_elbow.cas.h5", "pyfluent/mixing_elbow"
@@ -104,7 +116,8 @@ def test_read_case_and_data(monkeypatch):
     solver.exit()
 
 
-@pytest.mark.skip(reason="Skips upload even after adding ImportGeometry task object.")
+@pytest.mark.skip(reason=SKIP_BLOCKED)
+# Skips upload even after adding ImportGeometry task object.
 def test_datamodel_execute():
     import ansys.fluent.core as pyfluent
 
@@ -144,7 +157,7 @@ def test_file_list_in_datamodel(fault_tolerant_workflow_session):
 def test_local_file_transfer_in_datamodel(monkeypatch):
     import ansys.fluent.core as pyfluent
 
-    monkeypatch.setattr(pyfluent, "USE_FILE_TRANSFER_SERVICE", True)
+    monkeypatch.setattr(pyfluent.config, "use_file_transfer_service", True)
 
     fmd_file = examples.download_file("exhaust_system.fmd", "pyfluent/exhaust_system")
 

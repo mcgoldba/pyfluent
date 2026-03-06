@@ -9,12 +9,12 @@ Process
     -- Populate a parents dictionary with current class file name (not class name) as key and list of parents file names (not class names) as value.
     - Recursively Generate the rst files for classes starting with settings.root.
     -- Add target reference as the file name for the given class. This is used by other classes to generate hyperlinks
-    -- Add properties like members, undoc-memebers, show-inheritence to the autoclass directive.
+    -- Add properties like members, undoc-members, show-inheritance to the autoclass directive.
     -- Generate the tables of children, commands, arguments, and parents.
     --- Get access to the respective properties and members on the class with get_attr.
     --- Use the file name of the child class to generate the hyperlink to that class.
     --- Use the __doc__ property to generate the short summary for the corresponding child
-    --- Use the previously generated perents dict to populate the parents table.
+    --- Use the previously generated parents dict to populate the parents table.
 Usage
 -----
 python <path to settings_rstgen.py>
@@ -23,16 +23,22 @@ python <path to settings_rstgen.py>
 from contextlib import redirect_stdout
 import importlib
 import io
+import logging
 import os
 from pathlib import Path
 
 from deprecated_pyfluent_apis import PYFLUENT_DEPRECATED_DATA
 
+from ansys.fluent.core import config
 from ansys.fluent.core.search import search
 from ansys.fluent.core.utils.fluent_version import (
+    AnsysVersionNotFound,
     FluentVersion,
     get_version_for_file_name,
 )
+
+logger = logging.getLogger("pyfluent.settings_api")
+
 
 parents_dict = {}
 rst_list = []
@@ -119,6 +125,16 @@ def _populate_parents_list(cls):
         _populate_parents_list(getattr(cls, "child_object_type"))
 
 
+def _write_common(initial_param, r, cls, attr):
+    # TODO Add clarifying comments here
+    data_dict = {initial_param: "Summary"}
+    for child in getattr(cls, attr):
+        child_cls = cls._child_classes[child]
+        ref_string = f":ref:`{child} <{child_cls.__name__}>`"
+        data_dict[ref_string] = child_cls.__doc__.strip("\n").split("\n")[0]
+    _generate_table_for_rst(r, data_dict)
+
+
 def _populate_rst_from_settings(rst_dir, cls, version):
     istr1 = _get_indent_str(1)
     cls_name = cls.__name__
@@ -131,6 +147,7 @@ def _populate_rst_from_settings(rst_dir, cls, version):
     with open(rstpath, "w") as r:
         # Populate initial rst
         r.write(":orphan:\n\n")
+        # ``root`` used to create a hyperlink for settings API
         if cls_orig_name == "root":
             r.write(f".. _ref_{cls_name}:\n\n")
         else:
@@ -139,8 +156,17 @@ def _populate_rst_from_settings(rst_dir, cls, version):
         r.write(f'{"="*(len(cls_orig_name))}\n\n')
         deprecated = getattr(cls, "_deprecated_version", None)
         if deprecated:
-            r.write(f".. deprecated:: Ansys {cls._deprecated_version}\n\n")
-            deprecated_class_version.update({cls_name: deprecated})
+            try:
+                pyfluent_fluent_version = FluentVersion(float(cls._deprecated_version))
+            except AnsysVersionNotFound as ex:
+                logger.debug(ex)
+                pyfluent_fluent_version = FluentVersion.minimum_supported()
+                logger.debug(
+                    f"Using minimum supported version {pyfluent_fluent_version} instead of {cls._deprecated_version} for deprecated class {cls_name}."
+                )
+            release_version = str(pyfluent_fluent_version)
+            r.write(f".. deprecated:: {release_version}\n\n")
+            deprecated_class_version.update({cls_name: release_version})
         r.write(
             f".. autoclass:: ansys.fluent.core.generated.solver.settings_{version}.{cls_name}\n"
         )
@@ -148,46 +174,25 @@ def _populate_rst_from_settings(rst_dir, cls, version):
 
         if has_children:
             r.write(".. rubric:: Attributes\n\n")
-            data_dict = {}
-            data_dict["Attribute"] = "Summary"
-            for child in cls.child_names:
-                child_cls = cls._child_classes[child]
-                ref_string = f":ref:`{child} <{child_cls.__name__}>`"
-                data_dict[ref_string] = child_cls.__doc__.strip("\n").split("\n")[0]
-            _generate_table_for_rst(r, data_dict)
+            _write_common("Attribute", r, cls, "child_names")
 
         if has_commands:
             r.write(".. rubric:: Methods\n\n")
-            data_dict = {}
-            data_dict["Method"] = "Summary"
-            for child in cls.command_names:
-                child_cls = cls._child_classes[child]
-                ref_string = f":ref:`{child} <{child_cls.__name__}>`"
-                data_dict[ref_string] = child_cls.__doc__.strip("\n").split("\n")[0]
-            _generate_table_for_rst(r, data_dict)
+            _write_common("Method", r, cls, "command_names")
 
         if has_arguments:
             r.write(".. rubric:: Arguments\n\n")
-            data_dict = {}
-            data_dict["Argument"] = "Summary"
-            for child in cls.argument_names:
-                child_cls = cls._child_classes[child]
-                ref_string = f":ref:`{child} <{child_cls.__name__}>`"
-                data_dict[ref_string] = child_cls.__doc__.strip("\n").split("\n")[0]
-            _generate_table_for_rst(r, data_dict)
+            _write_common("Argument", r, cls, "argument_names")
 
         if has_named_object:
             child_cls = getattr(cls, "child_object_type")
             ref_string = f":ref:`{child_cls.__name__} <{child_cls.__name__}>`"
-            data_dict = {}
-            data_dict[ref_string] = child_cls.__doc__.strip("\n").split("\n")[0]
             r.write(".. rubric:: Named object type\n\n")
             r.write(f"{ref_string}\n\n\n")
 
         if parents_dict.get(cls_name):
             r.write(".. rubric:: Included in:\n\n")
-            data_dict = {}
-            data_dict["Parent"] = "Summary"
+            data_dict = {"Parent": "Summary"}
             for parent in parents_dict.get(cls_name):
                 parent_ref = parent.__name__
                 if parent_ref == "root":
@@ -293,10 +298,10 @@ if __name__ == "__main__":
     if not os.path.exists(rst_dir):
         os.makedirs(rst_dir)
 
-    image_tag = os.getenv(
-        "FLUENT_IMAGE_TAG", FluentVersion.current_dev().docker_image_tag
-    )
+    image_tag = config.fluent_image_tag
     version = get_version_for_file_name(image_tag.lstrip("v"))
+    print("Selecting Fluent version:", version)
+    print("Set the environment variable FLUENT_IMAGE_TAG to change the version.")
     settings = importlib.import_module(
         f"ansys.fluent.core.generated.solver.settings_{version}"
     )

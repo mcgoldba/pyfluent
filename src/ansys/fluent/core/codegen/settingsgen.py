@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -38,6 +38,7 @@ from ansys.fluent.core.solver.flobject import (
     ListObject,
     NamedObject,
     get_cls,
+    to_constant_name,
     to_python_name,
 )
 from ansys.fluent.core.utils.fix_doc import fix_settings_doc
@@ -107,10 +108,11 @@ def strip_parameters(docstring: str) -> str:
 
 
 def _populate_data(cls, api_tree: dict, version: str) -> dict:
-    data = {}
-    data["version"] = version
-    data["name"] = cls.__name__
-    data["bases"] = [base.__name__ for base in cls.__bases__]
+    data = {
+        "version": version,
+        "name": cls.__name__,
+        "bases": [base.__name__ for base in cls.__bases__],
+    }
     if "command" in cls.__doc__:
         data["doc"] = strip_parameters(cls.__doc__)
     else:
@@ -150,6 +152,8 @@ def _populate_data(cls, api_tree: dict, version: str) -> dict:
         data["child_object_type"]["doc"] = f"'child_object_type' of {cls.__name__}."
     else:
         data["child_object_type"] = None
+    data["allowed_values"] = getattr(cls, "_allowed_values", [])
+    data["has_migration_adapter"] = getattr(cls, "_has_migration_adapter", False)
     return data
 
 
@@ -230,8 +234,7 @@ def _write_data(cls_name: str, python_name: str, data: dict, f: IO, f_stub: IO |
     s.write(f"    _version = {data['version']!r}\n")
     deprecated = data["deprecated_version"]
     if deprecated:
-        release_version = "20" + data["deprecated_version"].replace(".", "R")
-        s.write(f"    _deprecated_version = {release_version!r}\n")
+        s.write(f"    _deprecated_version = {deprecated!r}\n")
         s_stub.write("    _deprecated_version: str\n")
     s.write(f"    fluent_name = {data['fluent_name']!r}\n")
     # _python_name preserves the original non-suffixed name of the class.
@@ -307,7 +310,21 @@ def _write_data(cls_name: str, python_name: str, data: dict, f: IO, f_stub: IO |
     if return_type:
         s.write(f"    return_type = {return_type!r}\n")
         s_stub.write("    return_type: str\n")
+    for allowed_value in data["allowed_values"]:
+        s.write(
+            f"    {to_constant_name(allowed_value)} = _FlStringConstant({allowed_value!r})\n"
+        )
+        s_stub.write(
+            f"    {to_constant_name(allowed_value)}: Final[str] = {allowed_value!r}\n"
+        )
+    if data["allowed_values"]:
+        s.write(f"    _allowed_values = {data['allowed_values']!r}\n")
+        s_stub.write("    _allowed_values: list[str]\n")
+    if data["has_migration_adapter"]:
+        s.write("    _has_migration_adapter = True\n")
+        s_stub.write("    _has_migration_adapter: bool\n")
     s.write("\n")
+    s_stub.write("\n")
     for name, (python_name, data, hash_, should_write_stub) in classes_to_write.items():
         if name not in _CLASS_WRITTEN:
             _write_data(
@@ -345,7 +362,7 @@ def generate(version: str, static_infos: dict, verbose: bool = False) -> None:
     shash = _gethash(sinfo)
     if not sinfo:
         return {"<solver_session>": api_tree}
-    output_dir = (pyfluent.CODEGEN_OUTDIR / "solver").resolve()
+    output_dir = (pyfluent.config.codegen_outdir / "solver").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / f"settings_{version}.py"
     output_stub_file = output_dir / f"settings_{version}.pyi"
@@ -371,10 +388,11 @@ def generate(version: str, static_infos: dict, verbose: bool = False) -> None:
         header.write("    _InputFile,\n")
         header.write("    _OutputFile,\n")
         header.write("    _InOutFile,\n")
+        header.write("    _FlStringConstant,\n")
         header.write(")\n\n")
         f.write(header.getvalue())
         f_stub.write(header.getvalue())
-        f_stub.write("from typing import Any\n\n")
+        f_stub.write("from typing import Any, Final\n\n")
         f.write(f'SHASH = "{shash}"\n\n')
         name = data["name"]
         _NAME_BY_HASH[_gethash(data)] = name

@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -28,7 +28,7 @@ See :func:`~ansys.fluent.core.launcher.launcher.launch_fluent()` `start_watchdog
 
 import os
 from pathlib import Path
-import random
+import secrets
 import string
 import subprocess
 import sys
@@ -50,7 +50,13 @@ class UnsuccessfulWatchdogLaunch(RuntimeError):
 
 
 def launch(
-    main_pid: int, sv_port: int, sv_password: str, sv_ip: str | None = None
+    main_pid: int,
+    sv_port: int,
+    sv_password: str,
+    sv_ip: str | None = None,
+    allow_remote_host: bool | None = None,
+    certificates_folder: str | None = None,
+    insecure_mode: bool | None = None,
 ) -> None:
     """Function to launch the Watchdog. Automatically used and managed by PyFluent.
 
@@ -64,6 +70,12 @@ def launch(
         Fluent server password.
     sv_ip : str, optional
         Fluent server IP.
+    allow_remote_host: bool, optional
+        Whether to allow remote hosts to connect to the Fluent server.
+    certificates_folder : str, optional
+        Path to the folder containing gRPC certificates.
+    insecure_mode : bool, optional
+        Whether to use insecure gRPC mode.
 
     Raises
     ------
@@ -71,13 +83,12 @@ def launch(
         If Watchdog fails to launch.
     """
     watchdog_id = "".join(
-        random.choices(
-            string.ascii_uppercase + string.ascii_lowercase + string.digits, k=6
-        )
+        secrets.choice(string.ascii_uppercase + string.ascii_lowercase + string.digits)
+        for _ in range(6)
     )
 
-    env_watchdog_debug = os.getenv("PYFLUENT_WATCHDOG_DEBUG", "off").upper()
-    if env_watchdog_debug in ("1", "ON"):
+    debug_watchdog = pyfluent.config.watchdog_debug
+    if debug_watchdog:
         logger.debug(
             f"PYFLUENT_WATCHDOG_DEBUG environment variable found, "
             f"enabling debugging for watchdog ID {watchdog_id}..."
@@ -129,9 +140,12 @@ def launch(
         str(sv_port),
         sv_password,
         watchdog_id,
+        str(allow_remote_host),
+        str(certificates_folder),
+        str(insecure_mode),
     ]
 
-    if env_watchdog_debug in ("1", "ON"):
+    if debug_watchdog:
         logger.debug(f"Starting Watchdog logging to directory {os.getcwd()}")
 
     kwargs = {"env": watchdog_env, "stdin": subprocess.DEVNULL, "close_fds": True}
@@ -151,7 +165,7 @@ def launch(
     if os.name == "posix":
         kwargs.update(start_new_session=True)
 
-    if env_watchdog_debug in ("1", "ON") and os.name != "nt":
+    if debug_watchdog and os.name != "nt":
         kwargs.update(
             stdout=open(f"pyfluent_watchdog_out_{watchdog_id}.log", mode="w"),
             stderr=open(f"pyfluent_watchdog_err_{watchdog_id}.log", mode="w"),
@@ -194,13 +208,13 @@ def launch(
                 err_content = "Watchdog - %s" % f.read().replace("\n", "")
             watchdog_err.unlink()
             logger.error(err_content)
-            if os.getenv("PYFLUENT_WATCHDOG_EXCEPTION_ON_ERROR"):
+            if pyfluent.config.watchdog_exception_on_error:
                 raise UnsuccessfulWatchdogLaunch(err_content)
 
         logger.warning(
             "PyFluent Watchdog did not initialize correctly, proceeding without it..."
         )
-        if os.getenv("PYFLUENT_WATCHDOG_EXCEPTION_ON_ERROR"):
+        if pyfluent.config.watchdog_exception_on_error:
             raise UnsuccessfulWatchdogLaunch(
                 "PyFluent Watchdog did not initialize correctly."
             )

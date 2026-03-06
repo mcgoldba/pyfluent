@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -49,20 +49,3 @@ def _get_active_session():
     stack = _get_stack()
     if stack:
         return stack[-1]
-
-
-class ReadCase:
-    """Context manager to read a Fluent case file."""
-
-    def __init__(self, session=None, case_file: str | None = None):
-        self.session = session or _get_active_session()
-        self.case_file = case_file
-
-    def __enter__(self):
-        if not self.case_file:
-            raise ValueError("A case file path must be provided to read.")
-        self.session.settings.file.read_case(file_name=self.case_file)
-        return self.session
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        pass

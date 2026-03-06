@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -24,11 +24,16 @@
 
 from enum import Enum
 import os
+import warnings
 
 from ansys.fluent.core.exceptions import DisallowedValuesError
 from ansys.fluent.core.fluent_connection import FluentConnection
 import ansys.fluent.core.launcher.error_handler as exceptions
+from ansys.fluent.core.launcher.error_warning_messages import (
+    BOTH_CERTIFICATES_FOLDER_AND_INSECURE_MODE_PROVIDED,
+)
 from ansys.fluent.core.launcher.launcher_utils import is_windows
+from ansys.fluent.core.pyfluent_warnings import PyFluentUserWarning
 from ansys.fluent.core.session_meshing import Meshing
 from ansys.fluent.core.session_pure_meshing import PureMeshing
 from ansys.fluent.core.session_solver import Solver
@@ -265,11 +270,12 @@ def _get_fluent_launch_mode(start_container, container_dict, scheduler_options):
     fluent_launch_mode: LaunchMode
         Fluent launch mode.
     """
+    from ansys.fluent.core import config
+
     if pypim.is_configured():
         fluent_launch_mode = LaunchMode.PIM
     elif start_container is True or (
-        start_container is None
-        and (container_dict or os.getenv("PYFLUENT_LAUNCH_CONTAINER") == "1")
+        start_container is None and (container_dict or config.launch_fluent_container)
     ):
         fluent_launch_mode = LaunchMode.CONTAINER
     # Currently, only Slurm scheduler is supported and within SlurmLauncher we check the value of the scheduler
@@ -280,11 +286,22 @@ def _get_fluent_launch_mode(start_container, container_dict, scheduler_options):
     return fluent_launch_mode
 
 
+def _should_add_driver_null(ui_mode: UIMode | None = None) -> bool:
+    return ui_mode not in {UIMode.GUI, UIMode.HIDDEN_GUI}
+
+
 def _get_graphics_driver(
     graphics_driver: (
         FluentWindowsGraphicsDriver | FluentLinuxGraphicsDriver | str | None
     ) = None,
+    ui_mode: UIMode | None = None,
 ):
+    ui_mode_ = UIMode(ui_mode)
+    if graphics_driver is not None and ui_mode_ not in {UIMode.GUI, UIMode.HIDDEN_GUI}:
+        warnings.warn(
+            "User-specified value for graphics driver is ignored while launching Fluent without GUI or without graphics.",
+            PyFluentUserWarning,
+        )
     if isinstance(
         graphics_driver, (FluentWindowsGraphicsDriver, FluentLinuxGraphicsDriver)
     ):
@@ -294,6 +311,12 @@ def _get_graphics_driver(
         if is_windows()
         else FluentLinuxGraphicsDriver(graphics_driver)
     )
+    if _should_add_driver_null(ui_mode_):
+        return (
+            FluentWindowsGraphicsDriver.NULL
+            if is_windows()
+            else FluentLinuxGraphicsDriver.NULL
+        )
     return graphics_driver
 
 
@@ -338,7 +361,7 @@ def _get_standalone_launch_fluent_version(argvals) -> FluentVersion | None:
 
     # (DEV) if "PYFLUENT_FLUENT_ROOT" environment variable is defined, we cannot
     # determine the Fluent version, so returning None.
-    if os.getenv("PYFLUENT_FLUENT_ROOT"):
+    if "PYFLUENT_FLUENT_ROOT" in os.environ:
         return None
 
     # 2. the latest ANSYS version from AWP_ROOT environment variables
@@ -361,8 +384,44 @@ def _validate_gpu(gpu: bool | list, dimension: int):
 
 def _get_argvals_and_session(argvals):
     _validate_gpu(argvals["gpu"], argvals["dimension"])
-    argvals["graphics_driver"] = _get_graphics_driver(argvals["graphics_driver"])
+    argvals["graphics_driver"] = _get_graphics_driver(
+        argvals["graphics_driver"], argvals["ui_mode"]
+    )
     argvals["mode"] = FluentMode(argvals["mode"])
     del argvals["self"]
     new_session = argvals["mode"].get_fluent_value()
     return argvals, new_session
+
+
+def get_remote_grpc_options(
+    certificates_folder: str | None, insecure_mode: bool
+) -> tuple[str | None, bool]:
+    """Get (certificates_folder, insecure_mode) from user input or environment variable for remote gRPC connection.
+
+    Parameters
+    ----------
+    certificates_folder : str, optional
+        Path to the certificates folder provided by the user.
+    insecure_mode : bool
+        Whether to use insecure gRPC mode, provided by the user.
+
+    Returns
+    -------
+    tuple[str | None, bool]
+        Path to the certificates folder and whether to use insecure gRPC mode.
+
+    Raises
+    ------
+    ValueError
+        If both `certificates_folder` and `insecure_mode` are provided by the user.
+    """
+    if certificates_folder is not None and insecure_mode:
+        raise ValueError(BOTH_CERTIFICATES_FOLDER_AND_INSECURE_MODE_PROVIDED)
+
+    if insecure_mode:
+        # if insecure_mode is passed True by the user, ignore certificates_folder environment variable
+        return None, insecure_mode
+    else:
+        if certificates_folder is not None:
+            return certificates_folder, insecure_mode
+        return os.environ.get("ANSYS_GRPC_CERTIFICATES"), insecure_mode

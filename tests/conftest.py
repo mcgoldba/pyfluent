@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -34,11 +34,42 @@ from packaging.version import Version
 import pytest
 
 import ansys.fluent.core as pyfluent
+from ansys.fluent.core.docker.utils import get_grpc_launcher_args_for_gh_runs
 from ansys.fluent.core.examples.downloads import download_file
 from ansys.fluent.core.utils.file_transfer_service import ContainerFileTransferStrategy
 from ansys.fluent.core.utils.fluent_version import FluentVersion
 
 sys.path.append(Path(__file__).parent / "util")
+
+# ============================================================================
+# Test Skip Reasons - Centralized for consistency and searchability
+# ============================================================================
+# Based on our understanding of the failure, tests are categorized into 3 groups:
+#
+# 1. Root cause completely unknown
+#    - Test behavior is unexplained; needs investigation from scratch
+#    - Examples: "Fails on CI", "Failing in GitHub" (with no further context)
+#
+# 2. Partially understood but unresolved
+#    - Some investigation done but root cause not fully identified
+#    - Active investigation may be ongoing
+#    - Example: "Wait for later implementation"
+#
+# 3. Root cause understood but test cannot be enabled due to an external blocker
+#    - e.g., upstream bug, CI/environment limitation, product constraint
+#    - An issue link may be present for tracking, but this does NOT imply active investigation
+#    - The blocker is known; we're waiting on external factors to resolve
+#    - Examples: "Currently only tested in backend", GitHub issue links, "Cannot read generated Python journals"
+# ============================================================================
+
+# 1. Root cause completely unknown
+SKIP_UNKNOWN = "Skipped (root cause completely unknown)"
+
+# 2. Partially understood but unresolved
+SKIP_INVESTIGATING = "Skipped (partially understood but unresolved)"
+
+# 3. Understood but blocked for other reasons
+SKIP_BLOCKED = "Skipped (root cause understood but test cannot be enabled due to an external blocker)"
 
 
 def pytest_addoption(parser):
@@ -65,7 +96,7 @@ def pytest_addoption(parser):
 def pytest_runtest_setup(item):
     if (
         any(mark.name == "standalone" for mark in item.iter_markers())
-        and os.getenv("PYFLUENT_LAUNCH_CONTAINER") == "1"
+        and pyfluent.config.launch_fluent_container
     ):
         pytest.skip()
 
@@ -170,12 +201,20 @@ def pytest_collection_finish(session):
 
 @pytest.fixture(autouse=True)
 def run_before_each_test(
-    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
-) -> None:
-    monkeypatch.setenv("PYFLUENT_TEST_NAME", request.node.name)
-    monkeypatch.setenv("PYFLUENT_CODEGEN_SKIP_BUILTIN_SETTINGS", "1")
-    pyfluent.CONTAINER_MOUNT_SOURCE = pyfluent.EXAMPLES_PATH
-    pyfluent.CONTAINER_MOUNT_TARGET = pyfluent.EXAMPLES_PATH
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+):
+    monkeypatch.setattr(pyfluent.config, "test_name", request.node.name)
+    monkeypatch.setattr(pyfluent.config, "codegen_skip_builtin_settings", True)
+    pyfluent.config.container_mount_source = pyfluent.config.examples_path
+    original_cwd = os.getcwd()
+    monkeypatch.chdir(tmp_path)
+    certs_path = Path(original_cwd) / "certs"
+    if certs_path.exists():
+        shutil.copytree(Path(original_cwd) / "certs", tmp_path / "certs")
+    yield
+    os.chdir(original_cwd)
 
 
 class Helpers:
@@ -245,7 +284,8 @@ def exhaust_system_geometry_filename():
 
 
 def create_session(**kwargs):
-    if pyfluent.USE_FILE_TRANSFER_SERVICE:
+    kwargs.update(get_grpc_launcher_args_for_gh_runs())
+    if pyfluent.config.use_file_transfer_service:
         file_transfer_service = ContainerFileTransferStrategy()
         container_dict = {"mount_source": file_transfer_service.mount_source}
         return pyfluent.launch_fluent(
@@ -329,6 +369,13 @@ def new_solver_session():
 
 
 @pytest.fixture
+def new_solver_session_wo_exit():
+    solver = create_session()
+    yield solver
+    # Exit is intentionally avoided here. Please exit from the method using this.
+
+
+@pytest.fixture
 def new_solver_session_t4():
     solver = create_session(processor_count=4)
     yield solver
@@ -370,6 +417,16 @@ def static_mixer_case_session(new_solver_session):
 
 
 @pytest.fixture
+def static_mixer_params_unitless_session(new_solver_session):
+    solver = new_solver_session
+    case_name = download_file(
+        "Static_Mixer_Parameters_unitless.cas.h5", "pyfluent/static_mixer"
+    )
+    solver.settings.file.read(file_type="case", file_name=case_name)
+    return solver
+
+
+@pytest.fixture
 def mixing_elbow_settings_session(new_solver_session):
     solver = new_solver_session
     case_name = download_file("mixing_elbow.cas.h5", "pyfluent/mixing_elbow")
@@ -378,6 +435,14 @@ def mixing_elbow_settings_session(new_solver_session):
         file_name=case_name,
         lightweight_setup=True,
     )
+    return solver
+
+
+@pytest.fixture
+def mixing_elbow_case_session(new_solver_session):
+    solver = new_solver_session
+    case_name = download_file("mixing_elbow.cas.h5", "pyfluent/mixing_elbow")
+    solver.settings.file.read(file_type="case", file_name=case_name)
     return solver
 
 
@@ -444,7 +509,7 @@ def periodic_rot_settings_session(new_solver_session):
 
 @pytest.fixture
 def disable_datamodel_cache(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(pyfluent, "DATAMODEL_USE_STATE_CACHE", False)
+    monkeypatch.setattr(pyfluent.config, "datamodel_use_state_cache", False)
 
 
 @pytest.fixture(params=["old", "new"])

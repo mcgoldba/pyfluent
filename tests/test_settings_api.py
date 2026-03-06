@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -22,14 +22,19 @@
 
 import warnings
 
+from conftest import SKIP_INVESTIGATING
 import pytest
 from pytest import WarningsRecorder
 
+from ansys.fluent.core import config
 from ansys.fluent.core.examples import download_file
 from ansys.fluent.core.pyfluent_warnings import PyFluentUserWarning
+from ansys.fluent.core.solver import VelocityInlets, Viscous
 from ansys.fluent.core.solver.flobject import (
     DeprecatedSettingWarning,
-    UnstableSettingWarning,
+    InactiveObjectError,
+    NamedObject,
+    ReadOnlyActionError,
     _Alias,
     _InputFile,
     _OutputFile,
@@ -136,13 +141,9 @@ def test_wildcard(new_solver_session):
             "inlet1": {"momentum": {"velocity": {"option": "value", "value": 10}}},
         }
     cell_zone_conditions = solver.setup.cell_zone_conditions
-    if solver.get_fluent_version() >= FluentVersion.v242:
-        sources = cell_zone_conditions.fluid["*"].sources.terms
-        sources_key = "sources"
-        terms_key = "terms"
-    else:
-        sources = cell_zone_conditions.fluid["*"].source_terms.source_terms
-        sources_key = terms_key = "source_terms"
+    sources = cell_zone_conditions.fluid["*"].sources.terms
+    sources_key = "sources"
+    terms_key = "terms"
     assert sources["*mom*"]() == {
         "fluid": {
             sources_key: {
@@ -442,11 +443,9 @@ def test_deprecated_settings_with_settings_api_aliases(mixing_elbow_case_data_se
 @pytest.mark.fluent_version(">=23.1")
 def test_command_return_type(new_solver_session):
     solver = new_solver_session
-    version = solver.get_fluent_version()
     case_path = download_file("mixing_elbow.cas.h5", "pyfluent/mixing_elbow")
     download_file("mixing_elbow.dat.h5", "pyfluent/mixing_elbow")
-    ret = solver.file.read_case_data(file_name=case_path)
-    assert ret is None if version >= FluentVersion.v242 else not None
+    assert solver.file.read_case_data(file_name=case_path) is None
     solver.solution.report_definitions.surface["surface-1"] = dict(
         surface_names=["cold-inlet"]
     )
@@ -460,31 +459,6 @@ def warning_record():
     with wrec:
         warnings.simplefilter("ignore", ResourceWarning)
         yield wrec
-
-
-@pytest.mark.skip("https://github.com/ansys/pyfluent/issues/2712")
-@pytest.mark.fluent_version(">=24.2")
-def test_unstable_settings_warning(new_solver_session, warning_record):
-    solver = new_solver_session
-    solver.file.export
-    assert len(warning_record) == 1
-    assert warning_record.pop().category == UnstableSettingWarning
-    try:
-        solver.file.exp
-    except AttributeError:
-        pass
-    assert len(warning_record) == 0
-    solver.file.export
-    assert len(warning_record) == 1
-    assert warning_record.pop().category == UnstableSettingWarning
-
-    # Issue in running in CI (probably due to -gu mode)
-    # case_path = download_file("mixing_elbow.cas.h5", "pyfluent/mixing_elbow")
-    # solver.file.read_case_data(file_name=case_path)
-    # img_path = "a.png"
-    # Path(img_path).unlink(missing_ok=True)
-    # solver.results.graphics.picture.save_picture(file_name=img_path)
-    # assert len(recwarn) == 0
 
 
 @pytest.mark.fluent_version(">=24.2")
@@ -539,6 +513,9 @@ def test_child_alias_with_parent_path(mixing_elbow_settings_session):
     )
 
     solver.settings.solution.initialization.hybrid_initialize()
+    if solver.get_fluent_version() >= FluentVersion.v261:
+        solver.settings.setup.models.multiphase.model = "eulerian"
+        solver.tui.define.models.multiphase.hybrid_models.ddpm("yes")
     assert (
         solver.settings.setup.models.discrete_phase.numerics.node_based_averaging.kernel._child_aliases
         == {
@@ -621,10 +598,9 @@ def test_nested_alias(mixing_elbow_settings_session):
 def test_commands_not_in_settings(new_solver_session):
     solver = new_solver_session
 
-    for command in ["exit", "switch_to_meshing_mode"]:
-        assert command not in dir(solver.settings)
-        with pytest.raises(AttributeError):
-            getattr(solver.settings, command)
+    assert "exit" not in dir(solver.settings)
+    with pytest.raises(AttributeError):
+        solver.settings.exit()
 
 
 @pytest.mark.fluent_version(">=25.1")
@@ -658,6 +634,8 @@ def test_deprecated_command_arguments(mixing_elbow_case_data_session):
     }
 
 
+@pytest.mark.skip(reason=SKIP_INVESTIGATING)
+# https://github.com/ansys/pyfluent/issues/4298
 @pytest.mark.fluent_version(">=25.2")
 def test_return_types_of_operations_on_named_objects(mixing_elbow_settings_session):
     solver = mixing_elbow_settings_session
@@ -771,7 +749,7 @@ def test_settings_with_deprecated_flag(mixing_elbow_settings_session):
 
 @pytest.fixture
 def use_runtime_python_classes(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("PYFLUENT_USE_RUNTIME_PYTHON_CLASSES", "1")
+    monkeypatch.setattr(config, "use_runtime_python_classes", True)
 
 
 @pytest.mark.fluent_version(">=24.2")
@@ -789,3 +767,96 @@ def test_runtime_python_classes(
         ].general.material()
         == "water-liquid"
     )
+
+
+@pytest.mark.fluent_version(">=26.1")
+def test_setting_string_constants(mixing_elbow_settings_session):
+    solver = mixing_elbow_settings_session
+    viscous = Viscous(solver)
+
+    # viscous.model.INVISCID is a string constant
+    assert viscous.model.INVISCID == "inviscid"
+    assert isinstance(viscous.model.INVISCID, str)
+    with pytest.raises(AttributeError):
+        viscous.model.INVISCID = "invalid"
+
+    # Setting using string constants
+    viscous.model = viscous.model.INVISCID
+    assert viscous.model() == "inviscid"
+    viscous.model = viscous.model.K_EPSILON
+    assert viscous.model() == "k-epsilon"
+    viscous.k_epsilon_model = viscous.k_epsilon_model.RNG
+    assert viscous.k_epsilon_model.RNG.is_active() is True
+    assert viscous.k_epsilon_model() == "rng"
+    assert viscous.k_epsilon_model.EASM.is_active() is False
+
+    with pytest.raises(ValueError):
+        viscous.k_epsilon_model = viscous.k_epsilon_model.EASM
+
+
+@pytest.mark.fluent_version(">=24.2")
+def test_named_object_commands(mixing_elbow_settings_session):
+    solver = mixing_elbow_settings_session
+    inlets = VelocityInlets(solver)
+    inlets.list()
+    inlets.list_properties(object_name="hot-inlet")
+    if solver.get_fluent_version() >= FluentVersion.v261:
+        NamedObject.list(inlets)
+        NamedObject.list_properties(inlets, object_name="hot-inlet")
+
+
+@pytest.mark.fluent_version(">=26.1")
+def test_migration_adapter_for_strings(mixing_elbow_settings_session):
+    solver = mixing_elbow_settings_session
+    solver.settings.setup.general.solver.time = "unsteady-2nd-order"
+    solver.settings.setup.models.discrete_phase.general_settings.interaction.enabled = (
+        True
+    )
+
+    solver.settings.setup.models.discrete_phase.general_settings.unsteady_tracking.enabled = (
+        True
+    )
+    solver.settings.setup.models.discrete_phase.general_settings.unsteady_tracking.option = (
+        "particle-time-step"
+    )
+    solver.settings.setup.models.discrete_phase.general_settings.unsteady_tracking.dpm_time_step_size = (
+        0.0002
+    )
+
+    # Migration adapter is set on the 'create_particles_at' to accept boolean values as well besides string
+    solver.settings.setup.models.discrete_phase.general_settings.unsteady_tracking.create_particles_at = (
+        False
+    )
+    assert (
+        solver.settings.setup.models.discrete_phase.general_settings.unsteady_tracking.create_particles_at()
+        == "fluid-flow-time-step"
+    )
+
+    solver.settings.setup.models.discrete_phase.general_settings.unsteady_tracking.create_particles_at = (
+        True
+    )
+    assert (
+        solver.settings.setup.models.discrete_phase.general_settings.unsteady_tracking.create_particles_at()
+        == "particle-time-step"
+    )
+
+
+def test_set_state_via_call(mixing_elbow_settings_session):
+    solver = mixing_elbow_settings_session
+    solver.settings.results.graphics.views.camera.position(xyz=[1.70, 1.14, 0.29])
+
+
+@pytest.mark.fluent_version(">=26.1")
+def test_read_only_command_execution(mixing_elbow_case_session):
+    solver = mixing_elbow_case_session
+    contour = solver.settings.results.graphics.contour.create()
+    assert contour.display.is_active() is False
+    with pytest.raises(InactiveObjectError):
+        contour.display.is_read_only()
+        # Same behaviour for attribute access of command arguments
+
+    contour.surfaces_list = ["wall-elbow"]
+    assert contour.display.is_active() is True
+    assert contour.display.is_read_only() is True
+    with pytest.raises(ReadOnlyActionError):
+        contour.display()

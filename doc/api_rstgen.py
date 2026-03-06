@@ -1,7 +1,84 @@
 """Provides a module for generating PyFluent API RST files."""
 
+import os
 from pathlib import Path
 import shutil
+
+from ansys.fluent.core import FluentVersion
+
+api_contents_path = (
+    Path(__file__).parents[0].resolve() / "source" / "api" / "api_contents.rst"
+)
+fluent_version = FluentVersion.current_release()
+
+
+def _write_rst_file(output_path: str, version: str):
+    content = f""".. _ref_api:
+
+API reference
+=============
+
+This API reference corresponds to {version}. PyFluent maintains strong backward compatibility guarantees, so scripts targeting older Ansys versions are expected to work without modification.
+
+This is PyFluent's class and function reference. Please refer to the :ref:`ref_user_guide` for
+full guidelines on their use.
+
+All the public APIs for PyFluent are listed in the left hand margin. Some key APIs are mentioned below:
+
+Meshing mode
+------------
+
+The :ref:`meshing workflow <ref_meshing_workflow_new>` and :ref:`meshing utilities <ref_meshing_datamodel_meshing_utilities>` provide the primary interface for
+creating, editing, managing, and querying mesh data.
+
+Solution mode
+-------------
+
+The solver :ref:`settings API <ref_root>` is the main interface for controlling and running the solver.
+
+
+.. toctree::
+    :maxdepth: 2
+    :hidden:
+    :caption: ansys.fluent.core
+
+    docker/docker_contents
+    filereader/filereader_contents
+    launcher/launcher_contents
+    meshing/meshing_contents
+    scheduler/scheduler_contents
+    services/services_contents
+    solver/solver_contents
+    streaming_services/streaming_services_contents
+    utils/utils_contents
+    data_model_cache
+    exceptions
+    file_session
+    field_data_interfaces
+    fluent_connection
+    journaling
+    logger
+    module_config
+    parametric
+    rpvars
+    search
+    session_base_meshing
+    session_meshing
+    session_pure_meshing
+    session_solver_icing
+    session_solver_lite
+    session_solver
+    session
+    session_utilities
+    system_coupling
+    pyfluent_warnings
+    workflow_new
+    deprecated_apis
+"""
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 def _get_folder_path(folder_name: str):
@@ -55,13 +132,10 @@ hierarchy = {
         "standalone_launcher",
         "watchdog",
     ],
-    "meshing": ["meshing_workflow", "datamodel/datamodel_contents", "tui/tui_contents"],
-    "post_objects": [
-        "check_in_notebook",
-        "post_helper",
-        "post_objects_container",
-        "singleton_meta",
-        "timing_decorator",
+    "meshing": [
+        "meshing_workflow_new",
+        "datamodel/datamodel_contents",
+        "tui/tui_contents",
     ],
     "scheduler": ["load_machines", "machine_list"],
     "services": [
@@ -101,7 +175,6 @@ hierarchy = {
         "data_transfer",
         "deprecate",
         "dictionary_operations",
-        "dump_session_data",
         "event_loop",
         "execution",
         "file_transfer_service",
@@ -112,8 +185,10 @@ hierarchy = {
         "setup_for_fluent",
     ],
     "other": [
+        "module_config",
         "exceptions",
         "file_session",
+        "field_data_interfaces",
         "fluent_connection",
         "journaling",
         "logger",
@@ -126,10 +201,11 @@ hierarchy = {
         "session_solver_icing",
         "session_solver_lite",
         "session_solver",
+        "session_utilities",
         "session",
         "system_coupling",
         "pyfluent_warnings",
-        "workflow",
+        "workflow_new",
     ],
 }
 
@@ -165,14 +241,16 @@ def _generate_api_source_rst_files(folder: str, files: list):
                             "other settings objects in a hierarchical structure.\n"
                         )
                     else:
-                        rst.write(f"{file}\n")
-                        rst.write(f'{"="*(len(f"{file}"))}\n\n')
+                        temp_file_name = file.removesuffix("_new")
+                        rst.write(f"{temp_file_name}\n")
+                        rst.write(f'{"="*(len(temp_file_name))}\n\n')
                         rst.write(
                             f".. automodule:: ansys.fluent.core.{folder}.{file}\n"
                         )
                 else:
-                    rst.write(f"{file}\n")
-                    rst.write(f'{"="*(len(f"{file}"))}\n\n')
+                    temp_file_name = file.removesuffix("_new")
+                    rst.write(f"{temp_file_name}\n")
+                    rst.write(f'{"="*(len(temp_file_name))}\n\n')
                     rst.write(f".. automodule:: ansys.fluent.core.{file}\n")
                 if "root" not in file:
                     _write_common_rst_members(rst_file=rst)
@@ -203,4 +281,5 @@ def _generate_api_index_rst_files():
 
 
 if __name__ == "__main__":
+    _write_rst_file(api_contents_path, fluent_version)
     _generate_api_index_rst_files()

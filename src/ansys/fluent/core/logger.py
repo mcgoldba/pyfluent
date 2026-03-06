@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -24,6 +24,8 @@
 
 import logging.config
 import os
+
+from ansys.fluent.core import config
 
 _logging_file_enabled = False
 
@@ -91,8 +93,6 @@ def get_default_config() -> dict:
                                        'level': 'DEBUG'},
                  'pyfluent.networking': {'handlers': ['pyfluent_file'],
                                          'level': 'DEBUG'},
-                 'pyfluent.post_objects': {'handlers': ['pyfluent_file'],
-                                           'level': 'DEBUG'},
                  'pyfluent.settings_api': {'handlers': ['pyfluent_file'],
                                            'level': 'DEBUG'},
                  'pyfluent.tui': {'handlers': ['pyfluent_file'], 'level': 'DEBUG'}},
@@ -250,7 +250,7 @@ def configure_env_var() -> None:
     If logging debug output to file by default is desired, without having to use :func:`enable()` every time,
     set environment variable ``PYFLUENT_LOGGING`` to ``DEBUG``.
     """
-    env_logging_level = os.getenv("PYFLUENT_LOGGING")
+    env_logging_level = config.logging_level_default
     if env_logging_level:
         if env_logging_level.isdigit():
             env_logging_level = int(env_logging_level)

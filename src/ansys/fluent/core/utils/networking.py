@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -23,9 +23,12 @@
 """Provides a module to get networking functionality."""
 
 from concurrent import futures
+import ipaddress
 import logging
 import socket
+import ssl
 from typing import Any
+import urllib.parse
 import urllib.request
 
 import grpc
@@ -79,16 +82,26 @@ def find_remoting_ip() -> str:
     str
         remoting ip address
     """
-    from ansys.fluent.core import INFER_REMOTING_IP_TIMEOUT_PER_IP
+    from ansys.fluent.core import config
 
-    for addrinfo in socket.getaddrinfo(
-        "localhost",
-        0,
-        family=socket.AF_INET,
-        type=socket.SOCK_STREAM,
-        flags=socket.AI_PASSIVE,
-    ):
-        ip = addrinfo[-1][0]
+    all_ips = [
+        addrinfo[-1][0]
+        for addrinfo in socket.getaddrinfo(
+            "localhost",
+            0,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+            flags=socket.AI_PASSIVE,
+        )
+    ]
+    # Check if we can establish a gRPC connection using localhost first
+    # before trying other IPs. It has been observed that in some systems,
+    # although we can establish a test gRPC connection using one of the
+    # resolved IP addresses in addrinfo, PyFluent fails to connect to Fluent
+    # using that IP address. Using localhost usually helps in such cases.
+    all_ips.insert(0, "localhost")
+
+    for ip in all_ips:
         port = get_free_port()
         address = f"{ip}:{port}"
         with _GrpcServer(address):
@@ -98,7 +111,7 @@ def find_remoting_ip() -> str:
                     if (
                         stub.Check(
                             health_pb2.HealthCheckRequest(),
-                            timeout=INFER_REMOTING_IP_TIMEOUT_PER_IP,
+                            timeout=config.infer_remoting_ip_timeout_per_ip,
                         ).status
                         == health_pb2.HealthCheckResponse.ServingStatus.SERVING
                     ):
@@ -120,12 +133,30 @@ def check_url_exists(url: str) -> bool:
     -------
     bool
         True if the URL exists, False otherwise
+
+    Raises
+    ------
+    ssl.SSLError
+        If there is an SSL error while checking the URL
+    ValueError
+        If the URL scheme is not http or https
     """
+    # Validate URL scheme to prevent security issues
+    parsed_url = urllib.parse.urlparse(url)
+    if parsed_url.scheme not in ("http", "https"):
+        raise ValueError(
+            f"Invalid URL scheme: {parsed_url.scheme}. Only http and https are allowed."
+        )
     try:
-        with urllib.request.urlopen(url) as response:
+        with urllib.request.urlopen(
+            url
+        ) as response:  # nosec B310 (Already validated url scheme)
             return response.status == 200
-    except Exception:
-        return False
+    except urllib.error.URLError as ex:
+        if ex.__context__ and isinstance(ex.__context__, ssl.SSLError):
+            raise ex.__context__
+        else:
+            return False
 
 
 def get_url_content(url: str) -> str:
@@ -140,6 +171,58 @@ def get_url_content(url: str) -> str:
     -------
     str
         content of the URL
+
+    Raises
+    ------
+    ValueError
+        If the URL scheme is not http or https
     """
-    with urllib.request.urlopen(url) as response:
+    # Validate URL scheme to prevent security issues
+    parsed_url = urllib.parse.urlparse(url)
+    if parsed_url.scheme not in ("http", "https"):
+        raise ValueError(
+            f"Invalid URL scheme: {parsed_url.scheme}. Only http and https are allowed."
+        )
+    with urllib.request.urlopen(
+        url
+    ) as response:  # nosec B310 (Already validated url scheme)
         return response.read()
+
+
+def get_uds_path(address: str) -> str | None:
+    """
+    Get the UDS path from a UDS address.
+
+    Parameters
+    ----------
+    address : str
+        The address to extract the UDS path from.
+
+    Returns
+    -------
+    str | None
+        The UDS path extracted from the address.
+    """
+    if address.startswith("unix:"):
+        return address[len("unix:") :]
+
+
+def is_localhost(ip: str) -> bool:
+    """
+    Check if the given ip address corresponds to localhost.
+
+    Parameters
+    ----------
+    ip : str
+        The ip address to check.
+
+    Returns
+    -------
+    bool
+        True if the address corresponds to localhost, False otherwise.
+    """
+    try:
+        return ipaddress.ip_address(ip).is_loopback
+    except ValueError:
+        # Not an IP, fall back to hostname
+        return ip.lower() == "localhost"

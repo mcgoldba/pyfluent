@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -31,7 +31,7 @@ import pytest
 
 import ansys.fluent.core as pyfluent
 from ansys.fluent.core.codegen import StaticInfoType, allapigen
-from ansys.fluent.core.codegen.datamodelgen import meshing_rule_file_names
+from ansys.fluent.core.codegen.datamodelgen import datamodel_file_name_map
 from ansys.fluent.core.search import get_api_tree_file_name
 from ansys.fluent.core.utils.fluent_version import get_version_for_file_name
 
@@ -56,9 +56,26 @@ def test_allapigen_files(new_solver_session):
     importlib.import_module(f"ansys.fluent.core.generated.solver.settings_{version}")
 
 
+@pytest.mark.fluent_version(">=26.1")
+@pytest.mark.codegen_required
+def test_settings_allowed_values(new_solver_session):
+    version = get_version_for_file_name(session=new_solver_session)
+    module = importlib.import_module(
+        f"ansys.fluent.core.generated.solver.settings_{version}"
+    )
+
+    file_type_1 = getattr(module, "file_type_1")
+    assert set(file_type_1._allowed_values) == set(
+        ["case", "case-data", "data", "mesh"]
+    )
+
+    unit = getattr(module, "unit")
+    assert set(unit._allowed_values) == set(["m", "cm", "mm", "in", "ft"])
+
+
 def test_codegen_with_no_static_info(monkeypatch):
     codegen_outdir = Path(tempfile.mkdtemp())
-    monkeypatch.setattr(pyfluent, "CODEGEN_OUTDIR", codegen_outdir)
+    monkeypatch.setattr(pyfluent.config, "codegen_outdir", codegen_outdir)
     version = "252"
     allapigen.generate(version, {})
     generated_paths = list(codegen_outdir.iterdir())
@@ -137,7 +154,7 @@ class main_menu(TUIMenu):
 @pytest.mark.parametrize("mode", ["solver", "meshing"])
 def test_codegen_with_tui_solver_static_info(mode, monkeypatch):
     codegen_outdir = Path(tempfile.mkdtemp())
-    monkeypatch.setattr(pyfluent, "CODEGEN_OUTDIR", codegen_outdir)
+    monkeypatch.setattr(pyfluent.config, "codegen_outdir", codegen_outdir)
     version = "252"
     static_infos = {}
     static_info_type = (
@@ -175,6 +192,7 @@ def test_codegen_with_tui_solver_static_info(mode, monkeypatch):
 
 _static_info_type_by_rules = {
     "workflow": StaticInfoType.DATAMODEL_WORKFLOW,
+    "meshing_workflow": StaticInfoType.DATAMODEL_MESHING_WORKFLOW,
     "meshing": StaticInfoType.DATAMODEL_MESHING,
     "PartManagement": StaticInfoType.DATAMODEL_PART_MANAGEMENT,
     "PMFileManagement": StaticInfoType.DATAMODEL_PM_FILE_MANAGEMENT,
@@ -217,12 +235,12 @@ from ansys.fluent.core.services.datamodel_se import (
     PyNamedObjectContainer,
     PyCommand,
     PyQuery,
-    PyCommandArguments,
-    PyTextualCommandArgumentsSubItem,
-    PyNumericalCommandArgumentsSubItem,
-    PyDictionaryCommandArgumentsSubItem,
-    PyParameterCommandArgumentsSubItem,
-    PySingletonCommandArgumentsSubItem
+    PyArguments,
+    PyArgumentsTextualSubItem,
+    PyArgumentsNumericalSubItem,
+    PyArgumentsDictionarySubItem,
+    PyArgumentsParameterSubItem,
+    PyArgumentsSingletonSubItem
 )
 
 
@@ -286,6 +304,7 @@ class Root(PyMenu):
             """
             Command C2.
 
+
             Parameters
             ----------
             A2 : float
@@ -294,20 +313,20 @@ class Root(PyMenu):
             -------
             bool
             """
-            class _C2CommandArguments(PyCommandArguments):
+            class _C2Arguments(PyArguments):
                 def __init__(self, service, rules, command, path, id):
                     super().__init__(service, rules, command, path, id)
                     self.A2 = self._A2(self, "A2", service, rules, path)
 
-                class _A2(PyNumericalCommandArgumentsSubItem):
+                class _A2(PyArgumentsNumericalSubItem):
                     """
                     Argument A2.
                     """
 
-            def create_instance(self) -> _C2CommandArguments:
+            def create_instance(self) -> _C2Arguments:
                 args = self._get_create_instance_args()
                 if args is not None:
-                    return self._C2CommandArguments(*args)
+                    return self._C2Arguments(*args)
 
     class P1(PyTextual):
         """
@@ -319,6 +338,7 @@ class Root(PyMenu):
         """
         Command C1.
 
+
         Parameters
         ----------
         A1 : str
@@ -327,20 +347,20 @@ class Root(PyMenu):
         -------
         bool
         """
-        class _C1CommandArguments(PyCommandArguments):
+        class _C1Arguments(PyArguments):
             def __init__(self, service, rules, command, path, id):
                 super().__init__(service, rules, command, path, id)
                 self.A1 = self._A1(self, "A1", service, rules, path)
 
-            class _A1(PyTextualCommandArgumentsSubItem):
+            class _A1(PyArgumentsTextualSubItem):
                 """
                 Argument A1.
                 """
 
-        def create_instance(self) -> _C1CommandArguments:
+        def create_instance(self) -> _C1Arguments:
             args = self._get_create_instance_args()
             if args is not None:
-                return self._C1CommandArguments(*args)'''
+                return self._C1Arguments(*args)'''
 
 
 @pytest.mark.parametrize(
@@ -357,7 +377,7 @@ class Root(PyMenu):
 )
 def test_codegen_with_datamodel_static_info(monkeypatch, rules):
     codegen_outdir = Path(tempfile.mkdtemp())
-    monkeypatch.setattr(pyfluent, "CODEGEN_OUTDIR", codegen_outdir)
+    monkeypatch.setattr(pyfluent.config, "codegen_outdir", codegen_outdir)
     version = "251"
     static_infos = {}
     static_info_type = _static_info_type_by_rules[rules]
@@ -388,12 +408,12 @@ def test_codegen_with_datamodel_static_info(monkeypatch, rules):
     datamodel_paths = list((codegen_outdir / f"datamodel_{version}").iterdir())
     assert len(datamodel_paths) == 1 or 2
     assert set(p.name for p in datamodel_paths) == {
-        f"{meshing_rule_file_names[rules]}.py"
-    } or {f"{meshing_rule_file_names[rules]}.pyi"}
+        f"{datamodel_file_name_map[rules]}.py"
+    } or {f"{datamodel_file_name_map[rules]}.pyi"}
     with open(
         codegen_outdir
         / f"datamodel_{version}"
-        / f"{meshing_rule_file_names[rules]}.py",
+        / f"{datamodel_file_name_map[rules]}.py",
         "r",
     ) as f:
         assert f.read().strip() == _expected_datamodel_api_output
@@ -411,6 +431,7 @@ def test_codegen_with_datamodel_static_info(monkeypatch, rules):
     api_tree_expected = {"<meshing_session>": {}, "<solver_session>": {}}
     if rules in [
         "workflow",
+        "meshing_workflow",
         "meshing",
         "PartManagement",
         "PMFileManagement",
@@ -504,6 +525,7 @@ from ansys.fluent.core.solver.flobject import (
     _InputFile,
     _OutputFile,
     _InOutFile,
+    _FlStringConstant,
 )
 
 SHASH = "3e6d76a4601701388ea8258912d145b7b7c436699a50b6c7fe9a29f41eeff194"
@@ -695,7 +717,7 @@ class root(Group):
 
 def test_codegen_with_settings_static_info(monkeypatch):
     codegen_outdir = Path(tempfile.mkdtemp())
-    monkeypatch.setattr(pyfluent, "CODEGEN_OUTDIR", codegen_outdir)
+    monkeypatch.setattr(pyfluent.config, "codegen_outdir", codegen_outdir)
     version = "251"
     static_infos = {}
     static_infos[StaticInfoType.SETTINGS] = _settings_static_info
@@ -828,7 +850,7 @@ def test_codegen_with_settings_static_info_edge_cases(
 ):
 
     codegen_outdir = Path(tempfile.mkdtemp())
-    monkeypatch.setattr(pyfluent, "CODEGEN_OUTDIR", codegen_outdir)
+    monkeypatch.setattr(pyfluent.config, "codegen_outdir", codegen_outdir)
     version = "251"
     static_infos = {}
     static_infos[StaticInfoType.SETTINGS] = settings_static_info

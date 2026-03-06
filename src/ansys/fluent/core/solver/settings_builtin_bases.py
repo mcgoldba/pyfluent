@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -24,7 +24,11 @@
 
 from typing import Protocol, runtime_checkable
 
-from ansys.fluent.core.solver.flobject import NamedObject, SettingsBase
+from ansys.fluent.core.solver.flobject import (
+    InactiveObjectError,
+    NamedObject,
+    SettingsBase,
+)
 from ansys.fluent.core.solver.settings_builtin_data import DATA
 from ansys.fluent.core.utils.context_managers import _get_active_session
 from ansys.fluent.core.utils.fluent_version import FluentVersion
@@ -52,19 +56,26 @@ def _get_settings_root(settings_source: SettingsBase | Solver):
 
 
 def _get_settings_obj(settings_root, builtin_settings_obj):
-    builtin_cls_name = builtin_settings_obj.__class__.__name__
+    builtin_cls_db_name = builtin_settings_obj.__class__._db_name
     obj = settings_root
-    path = DATA[builtin_cls_name][1]
+    path = DATA[builtin_cls_db_name][1]
+    found_path = None
     if isinstance(path, dict):
         version = FluentVersion(obj._version)
-        path = path.get(version)
-        if path is None:
-            raise RuntimeError(
-                f"{builtin_cls_name} is not supported in Fluent version {version}."
-            )
-    comps = path.split(".")
+        for version_set, p in path.items():
+            if version in version_set:
+                found_path = p
+                break
+        if found_path is None:
+            raise RuntimeError(f"{builtin_cls_db_name} is not supported in {version}.")
+    elif isinstance(path, str):
+        found_path = path
+    comps = found_path.split(".")
     for i, comp in enumerate(comps):
-        obj = SettingsBase.__getattribute__(obj, comp)  # bypass InactiveObjectError
+        try:
+            obj = getattr(obj, comp)
+        except InactiveObjectError:
+            raise InactiveObjectError(builtin_cls_db_name) from None
         if i < len(comps) - 1 and isinstance(obj, NamedObject):
             obj_name = getattr(builtin_settings_obj, comp)
             obj = obj[obj_name]
@@ -81,7 +92,7 @@ def _initialize_settings(instance, defaults: dict, settings_source=None, **kwarg
 
 
 class _SingletonSetting:
-    # Covers both groups and named-object containers
+    # Covers groups, named-object containers and commands.
     def __init__(self, settings_source: SettingsBase | Solver | None = None, **kwargs):
         _initialize_settings(self, {"settings_source": None}, settings_source, **kwargs)
 
@@ -152,3 +163,6 @@ class _CreatableNamedObjectSetting:
             self.__dict__.update(obj.__dict__ | dict(settings_source=settings_root))
         else:
             super().__setattr__(name, value)
+
+
+_CommandSetting = _SingletonSetting

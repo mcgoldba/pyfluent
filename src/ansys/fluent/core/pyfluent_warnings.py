@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -36,6 +36,36 @@ class PyFluentUserWarning(UserWarning):
     """Provides the common warning class for warnings generated from user code."""
 
     pass
+
+
+class FluentDevVersionWarning(PyFluentUserWarning):
+    """Warning raised when a released PyFluent version is used with a development version of Fluent."""
+
+    pass
+
+
+# Deriving from the base Warning instead of any derived classes
+# to have less chance of being ignored by user configurations.
+class InsecureGrpcWarning(Warning):
+    """Warning raised when gRPC connection is insecure."""
+
+    pass
+
+
+warnings.filterwarnings("always", category=InsecureGrpcWarning)
+
+
+def warning_for_fluent_dev_version(version):
+    """Provides warning if Fluent develop branch is used."""
+    from ansys.fluent.core import FluentVersion, config
+
+    if FluentVersion(version) > FluentVersion(config.fluent_release_version):
+        warnings.warn(
+            "⚠️ Warning: You are using PyFluent with an unreleased or development version of Fluent.\n"
+            "Compatibility is not guaranteed, and unexpected behavior may occur. Please use a released "
+            "version of Fluent that is officially supported by this version of PyFluent.",
+            FluentDevVersionWarning,
+        )
 
 
 class WarningControl:

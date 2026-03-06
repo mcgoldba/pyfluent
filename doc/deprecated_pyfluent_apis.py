@@ -21,7 +21,12 @@ PYFLUENT_DEPRECATED_DATA = [
     (
         ":py:meth:`ansys.fluent.core.session.BaseSession.health_check <ansys.fluent.core.session.BaseSession.health_check>`",
         "0.32",
+        ":py:meth:`ansys.fluent.core.session.BaseSession.is_active <ansys.fluent.core.session.BaseSession.is_active>`",
+    ),
+    (
         ":py:meth:`ansys.fluent.core.session.BaseSession.is_server_healthy <ansys.fluent.core.session.BaseSession.is_server_healthy>`",
+        "0.38",
+        ":py:meth:`ansys.fluent.core.session.BaseSession.is_active <ansys.fluent.core.session.BaseSession.is_active>`",
     ),
     (
         ":py:meth:`ansys.fluent.core.file_session.Transaction.add_surfaces_request <ansys.fluent.core.file_session.Transaction.add_surfaces_request>`",
@@ -52,6 +57,12 @@ PYFLUENT_DEPRECATED_DATA = [
         ":py:meth:`ansys.fluent.core.file_session.FileFieldData.get_vector_field_data <ansys.fluent.core.file_session.FileFieldData.get_vector_field_data>`",
         "0.25.0",
         ":py:meth:`ansys.fluent.core.file_session.FileFieldData.get_field_data <ansys.fluent.core.file_session.FileFieldData.get_field_data>`",
+    ),
+    # class
+    (
+        ":py:class:`ansys.fluent.core.services.field_data.FieldInfo <ansys.fluent.core.services.field_data.FieldInfo>`",
+        "0.34.0",
+        ":py:class:`ansys.fluent.core.services.field_data.FieldData <ansys.fluent.core.services.field_data.FieldData>`",
     ),
     # properties
     (
@@ -90,6 +101,11 @@ PYFLUENT_DEPRECATED_DATA = [
         ":py:meth:`ansys.fluent.core.services.field_data.Transaction.add_requests <ansys.fluent.core.services.field_data.Transaction.add_requests>`",
     ),
     # arguments
+    (
+        "``timeout`` argument of :py:func:`ansys.fluent.core.launcher.fluent_container.configure_container_dict <ansys.fluent.core.launcher.fluent_container.configure_container_dict>`",
+        "0.34.dev0",
+        "``start_timeout`` argument of :py:func:`ansys.fluent.core.launcher.launcher.launch_fluent <ansys.fluent.core.launcher.launcher.launch_fluent>`",
+    ),
     (
         "The `surface_names` argument of :py:meth:`ansys.fluent.core.file_session.Transaction.add_surfaces_request <ansys.fluent.core.file_session.Transaction.add_surfaces_request>`",
         "0.25.0",
@@ -239,5 +255,16 @@ PYFLUENT_DEPRECATED_DATA = [
         "The `surface_ids` argument of :py:meth:`ansys.fluent.core.services.field_data.Transaction.add_pathlines_fields_request <ansys.fluent.core.services.field_data.Transaction.add_pathlines_fields_request>`",
         "0.23.dev0",
         "`surfaces`",
+    ),
+    # Environment variables
+    (
+        "The `PYFLUENT_USE_DOCKER_COMPOSE` environment variable",
+        "0.34.0",
+        "``use_docker_compose`` argument of :py:func:`ansys.fluent.core.launcher.launcher.launch_fluent <ansys.fluent.core.launcher.launcher.launch_fluent>`",
+    ),
+    (
+        "The `PYFLUENT_USE_PODMAN_COMPOSE` environment variable",
+        "0.34.0",
+        "``use_podman_compose`` argument of :py:func:`ansys.fluent.core.launcher.launcher.launch_fluent <ansys.fluent.core.launcher.launcher.launch_fluent>`",
     ),
 ]

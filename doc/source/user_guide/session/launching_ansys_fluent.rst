@@ -2,6 +2,161 @@
 
 Launching and connecting to Fluent
 ==================================
+
+This guide explains how to start and connect to Ansys Fluent sessions using PyFluent. It covers common workflows such as
+:ref:`Launch from local installation <launch_from_local_installation>`, :ref:`Launch in a container <launch_in_container>`,
+or :ref:`Connect to an existing session <connect_to_existing_session>`. Examples are provided for initializing Fluent in
+meshing, solution, and post-processing modes.
+
+Advanced launch options, such as :ref:`selecting precision <select_precision>`, :ref:`dimensionality <select_dimension>`, and
+:ref:`parallel settings <parallel_settings>`, are also described. The document includes guidance for :ref:`running Fluent under job
+schedulers like Slurm <scheduler_support>`, :ref:`using PyFluent in PIM environments <pypim_guide>`, and configuring remote connections
+across Windows, Linux, and WSL systems.
+
+.. _launch_from_local_installation:
+
+Launch from local installation
+------------------------------
+
+.. vale Google.Spacing = NO
+
+The :meth:`from_install() <ansys.fluent.core.session_utilities.SessionBase.from_install>` method launches Fluent using a locally installed version of Ansys Fluent.
+
+Use this method when:
+
+- You have Fluent installed on your local machine.
+- You want to run Fluent from Python without needing tools like Docker or Podman.
+
+**Example:**
+
+.. code-block:: python
+
+  import ansys.fluent.core as pyfluent
+  meshing = pyfluent.Meshing.from_install()
+  pure_meshing = pyfluent.PureMeshing.from_install()
+  solver = pyfluent.Solver.from_install()
+  solver_aero = pyfluent.SolverAero.from_install()
+  solver_icing = pyfluent.SolverIcing.from_install()
+  pre_post = pyfluent.PrePost.from_install()
+
+
+.. _launch_in_container:
+
+Launch in a container
+---------------------
+
+The :meth:`from_container() <ansys.fluent.core.session_utilities.SessionBase.from_container>` method launches Fluent inside a Docker container.
+Pass ``use_docker_compose=True`` or ``use_podman_compose=True`` to use Docker Compose or Podman Compose, respectively.
+
+Use this method when:
+
+- You are working in a containerized setup.
+- You need to configure port mappings.
+- You're running isolated or parallel sessions.
+
+**Example:**
+
+.. code-block:: python
+
+  import ansys.fluent.core as pyfluent
+  from ansys.fluent.core.utils.networking import get_free_port
+
+  port_1 = get_free_port()
+  port_2 = get_free_port()
+  container_dict = {"ports": {f"{port_1}": port_1, f"{port_2}": port_2}}
+
+  meshing = pyfluent.Meshing.from_container(container_dict=container_dict, product_version=pyfluent.FluentVersion.v252, use_docker_compose=True)
+  pure_meshing = pyfluent.PureMeshing.from_container(container_dict=container_dict, product_version=pyfluent.FluentVersion.v252, use_podman_compose=True)
+  solver = pyfluent.Solver.from_container(container_dict=container_dict, product_version=pyfluent.FluentVersion.v252, use_docker_compose=True)
+  solver_aero = pyfluent.SolverAero.from_container(container_dict=container_dict, product_version=pyfluent.FluentVersion.v252, use_podman_compose=True)
+  solver_icing = pyfluent.SolverIcing.from_container(container_dict=container_dict, product_version=pyfluent.FluentVersion.v252, use_docker_compose=True)
+  pre_post = pyfluent.PrePost.from_container(container_dict=container_dict, product_version=pyfluent.FluentVersion.v252, use_podman_compose=True)
+
+
+.. _connect_to_existing_session:
+
+Connect to an existing session
+------------------------------
+
+The :meth:`from_connection() <ansys.fluent.core.session_utilities.SessionBase.from_connection>` method connects to a previously launched Fluent session.
+
+Use this method when:
+
+- Fluent was launched externally or earlier.
+- You need to connect from a different process or system.
+
+**Example:**
+
+.. code-block:: python
+
+   import ansys.fluent.core as pyfluent
+
+   # Launch to retrieve credentials
+   solver = pyfluent.Solver.from_install()
+   print(solver.health_check.check_health())
+
+   ip = solver.connection_properties.ip
+   password = solver.connection_properties.password
+   port = solver.connection_properties.port
+
+   # Connect to the session
+   solver_connected = pyfluent.Solver.from_connection(ip=ip, password=password, port=port)
+   print(solver_connected.health_check.check_health())
+
+   solver.exit()
+   solver_connected.exit()
+
+.. note::
+
+    PyFluent offers two Python interfaces for meshing:
+
+    - ``Meshing``: meshing interface with an additional method to switch to solver mode.
+    - ``PureMeshing``: meshing interface without any solver switching features.
+
+    The two interfaces expose the **same meshing functionality**. The only difference is that
+    ``Meshing`` includes ``switch_to_solver()``.
+
+    When connecting to an existing Fluent session
+    via :meth:`from_connection() <ansys.fluent.core.session_utilities.SessionBase.from_connection>`:
+
+    - Use ``PureMeshing.from_connection()`` if the session was launched for **meshing only**.
+    - Use ``Meshing.from_connection()`` if the session supports **meshing and solving**.
+    - You may also use ``PureMeshing.from_connection()`` with a session that supports solving,
+    if you intentionally want access **only to meshing features**.
+
+    A ``Meshing`` interface is not recommended for a **meshing-only** session, because
+    ``switch_to_solver()`` would raise an error in that case.
+
+
+.. _connect_to_pim_session:
+
+Launch in `PIM <https://pypim.docs.pyansys.com/version/stable/>`_ mode
+----------------------------------------------------------------------
+
+The :meth:`from_pim() <ansys.fluent.core.session_utilities.SessionBase.from_pim>` method launches Fluent in `PIM <https://pypim.docs.pyansys.com/version/stable/>`_ mode.
+
+Use this method when:
+
+- PyFluent is used within a `PIM <https://pypim.docs.pyansys.com/version/stable/>`_ configured environment.
+
+**Example:**
+
+.. code-block:: python
+
+  import ansys.fluent.core as pyfluent
+  meshing = pyfluent.Meshing.from_pim()
+  pure_meshing = pyfluent.PureMeshing.from_pim()
+  solver = pyfluent.Solver.from_pim()
+  solver_aero = pyfluent.SolverAero.from_pim()
+  solver_icing = pyfluent.SolverIcing.from_pim()
+  pre_post = pyfluent.PrePost.from_pim()
+
+
+.. vale Google.Spacing = YES
+
+Using :func:`launch_fluent() <ansys.fluent.core.launcher.launcher.launch_fluent>`
+---------------------------------------------------------------------------------
+
 You can use the :func:`launch_fluent() <ansys.fluent.core.launcher.launcher.launch_fluent>`
 function to start Fluent from Python. This code starts Fluent in the background and starts
 Fluent's gRPC server so that commands can be sent to it from the Python interpreter:
@@ -9,7 +164,7 @@ Fluent's gRPC server so that commands can be sent to it from the Python interpre
 .. code:: python
 
   >>> import ansys.fluent.core as pyfluent
-  >>> solver = pyfluent.launch_fluent()
+  >>> solver_session = pyfluent.launch_fluent()
 
 
 You can use the :func:`connect_to_fluent() <ansys.fluent.core.launcher.launcher.connect_to_fluent>`
@@ -30,7 +185,7 @@ directory:
 .. code:: python
 
   >>> import ansys.fluent.core as pyfluent
-  >>> solver = pyfluent.connect_to_fluent(
+  >>> solver_session = pyfluent.connect_to_fluent(
   >>>     server_info_file_name="server.txt"
   >>> )
 
@@ -40,18 +195,18 @@ Launcher options
 The following examples show different ways that you can launch Fluent locally.
 For more information, see :func:`launch_fluent() <ansys.fluent.core.launcher.launcher.launch_fluent>`.
 
-Solver mode
-~~~~~~~~~~~
+Solution mode
+~~~~~~~~~~~~~
 These two examples show equivalent ways to launch Fluent in solution mode:
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(mode=pyfluent.FluentMode.SOLVER)
-  
+  >>> solver_session = pyfluent.launch_fluent(mode=pyfluent.FluentMode.SOLVER)
+
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent()
+  >>> solver_session = pyfluent.launch_fluent()
 
 
 Meshing mode
@@ -76,6 +231,8 @@ This example shows how to launch Fluent in Pre/Post mode:
   >>> pre_post_session = pyfluent.launch_fluent(mode=pyfluent.FluentMode.PRE_POST)
 
 
+.. _select_precision:
+
 Precision
 ~~~~~~~~~
 This example shows how to launch Fluent in solution mode
@@ -83,10 +240,12 @@ and set the floating point precision:
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(
+  >>> solver_session = pyfluent.launch_fluent(
   >>>      precision=pyfluent.Precision.DOUBLE
   >>> )
 
+
+.. _select_dimension:
 
 Dimension
 ~~~~~~~~~
@@ -95,11 +254,13 @@ modeling dimension to two:
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(
+  >>> solver_session = pyfluent.launch_fluent(
   >>>      precision=pyfluent.Precision.DOUBLE,
   >>>      dimension=pyfluent.Dimension.TWO
   >>> )
 
+
+.. _parallel_settings:
 
 Local parallel
 ~~~~~~~~~~~~~~
@@ -108,7 +269,7 @@ number of processors for local parallel execution:
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(
+  >>> solver_session = pyfluent.launch_fluent(
   >>>      precision=pyfluent.Precision.DOUBLE,
   >>>      dimension=pyfluent.Dimension.TWO,
   >>>      processor_count=2
@@ -122,7 +283,7 @@ distributed across more than one machine:
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(
+  >>> solver_session = pyfluent.launch_fluent(
   >>>     precision=pyfluent.Precision.DOUBLE,
   >>>     dimension=pyfluent.Dimension.THREE,
   >>>     processor_count=16
@@ -141,6 +302,9 @@ This command enables logging:
 
 
 For more details, see :ref:`ref_logging_guide`.
+
+
+.. _scheduler_support:
 
 Scheduler support
 -----------------
@@ -196,7 +360,7 @@ machines and cores:
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(
+  >>> solver_session = pyfluent.launch_fluent(
   >>>      precision=pyfluent.Precision.DOUBLE,
   >>>      dimension=pyfluent.Dimension.THREE
   >>> )
@@ -207,7 +371,7 @@ Fluent uses:
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(
+  >>> solver_session = pyfluent.launch_fluent(
   >>>     precision=pyfluent.Precision.DOUBLE,
   >>>     dimension=pyfluent.Dimension.THREE,
   >>>     processor_count=16,
@@ -228,7 +392,7 @@ using the ``additional_arguments`` parameter. For local parallel execution, simp
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(
+  >>> solver_session = pyfluent.launch_fluent(
   >>>     precision=pyfluent.Precision.DOUBLE,
   >>>     dimension=pyfluent.Dimension.THREE,
   >>>     additional_arguments="-t16"
@@ -239,7 +403,7 @@ For distributed parallel processing, you usually pass both parameters:
 
 .. code:: python
 
-  >>> solver = pyfluent.launch_fluent(
+  >>> solver_session = pyfluent.launch_fluent(
   >>>     precision=pyfluent.Precision.DOUBLE,
   >>>     dimension=pyfluent.Dimension.THREE,
   >>>     additional_arguments="-t16 -cnf=m1:8,m2:8",
@@ -261,7 +425,7 @@ scheduler without using any bash script:
   >>>     },
   >>>     additional_arguments="-t16 -cnf=m1:8,m2:8",
   >>> )
-  >>> solver = slurm.result()
+  >>> solver_session = slurm.result()
 
 
 .. vale off
@@ -281,12 +445,14 @@ the ``-t`` and ``-cnf`` arguments must be passed to the
 :func:`launch_fluent() <ansys.fluent.core.launcher.launcher.launch_fluent>` function
 using the ``additional_arguments`` parameter for distributed parallel processing.
 
+.. _pypim_guide:
+
 Launching a `PIM <https://pypim.docs.pyansys.com/version/stable/>`_ session
 ---------------------------------------------------------------------------
-When PyFluent is used within a `PIM <https://pypim.docs.pyansys.com/version/stable/>`_ configured environment, 
-the :func:`launch_fluent() <ansys.fluent.core.launcher.launcher.launch_fluent>` function automatically launches 
-Fluent session in `PIM <https://pypim.docs.pyansys.com/version/stable/>`_ mode and in that same environment it 
-can be launched explicitly using :func:`create_launcher() <ansys.fluent.core.launcher.launcher.create_launcher>` as follows:
+When PyFluent is used within a `PIM <https://pypim.docs.pyansys.com/version/stable/>`_ configured environment,
+:func:`launch_fluent() <ansys.fluent.core.launcher.launcher.launch_fluent>` automatically launches Fluent in
+`PIM <https://pypim.docs.pyansys.com/version/stable/>`_ mode. In that same environment it can be launched explicitly
+using :func:`create_launcher() <ansys.fluent.core.launcher.launcher.create_launcher>` as follows:
 
 .. code:: python
 
@@ -304,6 +470,7 @@ Launching Fluent in container mode with Docker Compose or Podman Compose
 ------------------------------------------------------------------------
 
 Use PyFluent with Docker Compose or Podman Compose to run Fluent in a consistent, reproducible containerized environment.
+Pass ``use_docker_compose=True`` or ``use_podman_compose=True`` to use Docker Compose or Podman Compose, respectively.
 
 1. **Docker Compose**
 
@@ -323,25 +490,16 @@ Use PyFluent with Docker Compose or Podman Compose to run Fluent in a consistent
 
 Example:
 
-Set environment variables to select the container engine:
-
-.. code:: python
-
-  >>> import os
-  >>> os.environ["PYFLUENT_LAUNCH_CONTAINER"] = "1"
-  >>> os.environ["PYFLUENT_USE_PODMAN_COMPOSE"] = "1" # or os.environ["PYFLUENT_USE_PODMAN_COMPOSE"] = "1"
-
-
-Then launch:
+Launch Fluent in container mode via PyFluent:
 
 .. code:: python
 
   >>> import ansys.fluent.core as pyfluent
   >>> from ansys.fluent.core import examples
-  >>> solver = pyfluent.launch_fluent()
+  >>> solver_session = pyfluent.launch_fluent(start_container=True, use_docker_compose=True)
   >>> case_file_name = examples.download_file("mixing_elbow.cas.h5", "pyfluent/mixing_elbow")
-  >>> solver.file.read(file_name=case_file_name, file_type="case")
-  >>> solver.exit()
+  >>> solver_session.settings.file.read(file_name=case_file_name, file_type="case")
+  >>> solver_session.exit()
 
 
 Connect to a Fluent container running inside WSL from a Windows host
@@ -351,7 +509,7 @@ Connect to a Fluent container running inside WSL from a Windows host
 
 .. code:: console
 
-    docker run -it -p 63084:63084 -v /mnt/d/testing:/testing -e "ANSYSLMD_LICENSE_FILE=<license file or server>" -e "REMOTING_PORTS=63084/portspan=2" ghcr.io/ansys/pyfluent:v25.2.0 3ddp -gu -sifile=/testing/server.txt
+    docker run -it -p 63084:63084 -v /mnt/d/testing:/testing -e "ANSYSLMD_LICENSE_FILE=<license file or server>" -e "REMOTING_PORTS=63084/portspan=2" <image registry>:v25.2.0 3ddp -gu -sifile=/testing/server.txt
     /ansys_inc/v252/fluent/fluent25.2.0/bin/fluent -r25.2.0 3ddp -gu -sifile=/testing/server.txt
 
 2. Connect from PyFluent running on a Windows host
@@ -359,7 +517,7 @@ Connect to a Fluent container running inside WSL from a Windows host
 .. code:: python
 
   >>> import ansys.fluent.core as pyfluent
-  >>> solver = pyfluent.connect_to_fluent(ip="localhost", port=63084, password=<password written `server.txt`>)
+  >>> solver_session = pyfluent.connect_to_fluent(ip="localhost", port=63084, password=<password written `server.txt`>)
 
 
 Connecting to a Fluent container running inside Linux from a Windows host
@@ -379,13 +537,13 @@ Connecting to a Fluent container running inside Linux from a Windows host
 .. code:: python
 
   >>> import ansys.fluent.core as pyfluent
-  >>> solver = pyfluent.connect_to_fluent(ip="10.18.19.151", port=44383, password="hbsosnni")
+  >>> solver_session = pyfluent.connect_to_fluent(ip="10.18.19.151", port=44383, password="hbsosnni")
 
 
 Connecting to Fluent on Windows from a Linux or WSL host
 --------------------------------------------------------
 
-This guide describes how to connect to an ANSYS Fluent instance running on a Windows machine from a Linux or WSL host. 
+This section outlines how to connect to Fluent running on Windows from a Linux or WSL host.
 It also includes steps to enable remote file transfer.
 
   Prerequisites:
@@ -409,7 +567,7 @@ A. **Set Up Fluent and File Transfer Server on Windows**
 
 2. **Retrieve Connection Details**
 
-   Get the IP address, port, and password from the `server_info.txt` file.  
+   Get the IP address, port, and password from the `server_info.txt` file.
    Example:
    - IP: ``10.18.44.179``
    - Port: ``51344``
@@ -448,19 +606,19 @@ Run the following Python code to connect to Fluent and transfer files:
    from ansys.fluent.core.utils.file_transfer_service import RemoteFileTransferStrategy
 
    file_service = RemoteFileTransferStrategy("10.18.44.179", 50000)
-   solver = connect_to_fluent(ip="10.18.44.179", port=51344, password="5scj6c8l", file_transfer_service=file_service)
+   solver_session = connect_to_fluent(ip="10.18.44.179", port=51344, password="5scj6c8l", file_transfer_service=file_service)
 
    # `mixing_elbow.cas.h5` will be uploaded to remote Fluent working directory
-   solver.file.read_case(file_name="/home/user_name/mixing_elbow.cas.h5")
+   solver_session.settings.file.read_case(file_name="/home/user_name/mixing_elbow.cas.h5")
 
    # `elbow_remote.cas.h5` will be downloaded to local working directory
-   solver.file.write_case(file_name="elbow_remote.cas.h5")
+   solver_session.settings.file.write_case(file_name="elbow_remote.cas.h5")
 
 
 Connecting to Fluent on Linux or WSL from a Windows host
 --------------------------------------------------------
 
-This guide describes how to connect to an ANSYS Fluent instance running on a Linux or WSL machine from a Windows host. 
+This section outlines how to connect to an Fluent running on Linux or WSL from a Windows host.
 It also includes steps to enable remote file transfer.
 
   Prerequisites:
@@ -484,7 +642,7 @@ A. **Set Up Fluent and File Transfer Server on Linux or WSL**
 
 2. **Retrieve Connection Details**
 
-   Get the IP address, port, and password from the `server_info.txt` file.  
+   Get the IP address, port, and password from the `server_info.txt` file.
    Example:
    - IP: ``10.18.19.150``
    - Port: ``41429``
@@ -508,11 +666,10 @@ Run the following Python code to connect to Fluent and transfer files:
    from ansys.fluent.core.utils.file_transfer_service import RemoteFileTransferStrategy
 
    file_service = RemoteFileTransferStrategy("10.18.19.150", 50000)
-   solver = connect_to_fluent(ip="10.18.19.150", port=41429, password="u5s3iivh", file_transfer_service=file_service)
+   solver_session = connect_to_fluent(ip="10.18.19.150", port=41429, password="u5s3iivh", file_transfer_service=file_service)
 
    # `mixing_elbow.cas.h5` will be uploaded to remote Fluent working directory
-   solver.file.read_case(file_name="D:\path_to_file\mixing_elbow.cas.h5")
+   solver_session.settings.file.read_case(file_name="D:\path_to_file\mixing_elbow.cas.h5")
 
    # `elbow_remote.cas.h5` will be downloaded to local working directory
-   solver.file.write_case(file_name="elbow_remote.cas.h5")
-
+   solver_session.settings.file.write_case(file_name="elbow_remote.cas.h5")

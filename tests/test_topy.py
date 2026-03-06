@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -24,14 +24,16 @@ import os
 from pathlib import Path
 import time
 
+from conftest import SKIP_BLOCKED
 import pytest
 
 import ansys.fluent.core as pyfluent
 
 
-@pytest.mark.skip(reason="Unable to read generated python journal from fluent.")
+@pytest.mark.skip(reason=SKIP_BLOCKED)
+# Unable to read generated python journal from fluent.
 def test_single_jou():
-    file_name = os.path.join(pyfluent.EXAMPLES_PATH, "jou1.jou")
+    file_name = os.path.join(pyfluent.config.examples_path, "jou1.jou")
 
     with open(file_name, "w") as journal:
         journal.write('(display "from jou1.jou")')
@@ -63,9 +65,10 @@ def test_single_jou():
             break
 
 
-@pytest.mark.skip(reason="Unable to read generated python journal from fluent.")
+@pytest.mark.skip(reason=SKIP_BLOCKED)
+# Unable to read generated python journal from fluent.
 def test_single_scm():
-    file_name = os.path.join(pyfluent.EXAMPLES_PATH, "jou1.scm")
+    file_name = os.path.join(pyfluent.config.examples_path, "jou1.scm")
 
     with open(file_name, "w") as journal:
         journal.write('(display "from jou1.scm")')
@@ -97,10 +100,11 @@ def test_single_scm():
             break
 
 
-@pytest.mark.skip(reason="Unable to read generated python journal from fluent.")
+@pytest.mark.skip(reason=SKIP_BLOCKED)
+# Unable to read generated python journal from fluent.
 def test_2_jou():
-    file_name_1 = os.path.join(pyfluent.EXAMPLES_PATH, "jou1.jou")
-    file_name_2 = os.path.join(pyfluent.EXAMPLES_PATH, "jou2.jou")
+    file_name_1 = os.path.join(pyfluent.config.examples_path, "jou1.jou")
+    file_name_2 = os.path.join(pyfluent.config.examples_path, "jou2.jou")
 
     with open(file_name_1, "w") as journal:
         journal.write('(display "from jou1.jou")')
@@ -149,10 +153,11 @@ def test_2_jou():
             break
 
 
-@pytest.mark.skip(reason="Unable to read generated python journal from fluent.")
+@pytest.mark.skip(reason=SKIP_BLOCKED)
+# Unable to read generated python journal from fluent.
 def test_2_scm():
-    file_name_1 = os.path.join(pyfluent.EXAMPLES_PATH, "jou1.scm")
-    file_name_2 = os.path.join(pyfluent.EXAMPLES_PATH, "jou2.scm")
+    file_name_1 = os.path.join(pyfluent.config.examples_path, "jou1.scm")
+    file_name_2 = os.path.join(pyfluent.config.examples_path, "jou2.scm")
 
     with open(file_name_1, "w") as journal:
         journal.write('(display "from jou1.scm")')

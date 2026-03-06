@@ -32,7 +32,7 @@ by :func:`launch_fluent() <ansys.fluent.core.launcher.launcher.launch_fluent>` f
 
 .. code-block:: python
 
-   >>> dir(solver.tui.define.models.viscous)
+   >>> dir(solver_session.tui.define.models.viscous)
    ['add_intermittency_transition_model', 'add_transition_model',
    'corner_flow_correction', 'curvature_correction',
    'detached_eddy_simulation', 'inviscid', 'k_kl_w', 'ke_realizable', 'ke_rng',
@@ -45,7 +45,7 @@ To see the documentation for the viscous model menu options, you can run:
 
 .. code-block:: python
 
-   >>> help(solver.tui.define.models.viscous)
+   >>> help(solver_session.tui.define.models.viscous)
    Help on viscous in module ansys.fluent.core.generated.solver.tui_241 object:
 
    class viscous(ansys.fluent.core.services.datamodel_tui.TUIMenu)
@@ -76,7 +76,7 @@ construct the TUI commands for PyFluent in different Fluent versions.
 TUI command construction
 ------------------------
 
-From the 2023 R2 release onward, a Fluent Python journal contains Python calls
+From the 2024 R2 release onward, a Fluent Python journal contains Python calls
 corresponding to the TUI commands executed in Fluent. Python journaling generates
 a call to a corresponding settings API command if one exists. For instance, with Fluent
 running in solution mode and Python journaling started, you can type the following in
@@ -109,7 +109,7 @@ PyFluent, where :obj:`~ansys.fluent.core.session_solver.Solver` is the session i
 
 .. code:: python
 
-   solver.settings.setup.boundary_conditions.velocity_inlet['inlet1'] = {"t" : 293.15}
+   solver_session.settings.setup.boundary_conditions.velocity_inlet['inlet1'] = {"t" : 293.15}
 
 In the above example, the settings API command is recorded as that exists for the TUI
 command. An example where settings API doesn't exist is setting the pressure unit:
@@ -122,7 +122,7 @@ The corresponding Python command recorded in the Python journal is:
 
 .. code:: python
 
-   solver.tui.define.units('pressure', '"Pa"')
+   solver_session.tui.define.units('pressure', '"Pa"')
 
 Note, the string ``"Pa"`` is wrapped in single quotation marks
 to preserve the double quotation marks around the TUI argument.
@@ -135,16 +135,12 @@ file my_journal.py in the working directory.
 
    fluent.exe 3ddp -i my_journal.jou -topy
 
-In Fluent 2023 R1, calls to TUI commands that have equivalents in the solver settings
+In Fluent 2024 R2 or later, calls to TUI commands that have equivalents in the solver settings
 API are automatically recorded as method calls to the corresponding solver settings
 objects in the Python journal. If a TUI command does not have an API analogue, it is
 recorded as ``execute_tui(<argument>)``, where ``<argument>`` is the original TUI command string.
 You'll need to manually convert these TUI commands using the transformation rules provided
 in the next section.
-
-In Fluent 2022 R2, the Python journaling feature is not available. Therefore, you must
-manually convert all TUI commands using the transformation rules described in the next
-section.
 
 TUI command transformation rules
 --------------------------------

@@ -1,4 +1,4 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -44,3 +44,4 @@ class Solver:
     def write_case(self, file_name: str): ...
     @property
     def settings(self) -> settings_root.root: ...
+    def enable_beta_features(self): ...

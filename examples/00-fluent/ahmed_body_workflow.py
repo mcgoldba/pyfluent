@@ -1,4 +1,11 @@
-# Copyright (C) 2021 - 2025 ANSYS, Inc. and/or its affiliates.
+# /// script
+# dependencies = [
+#   "ansys-fluent-core",
+#   "ansys-fluent-visualization",
+# ]
+# ///
+
+# Copyright (C) 2021 - 2026 ANSYS, Inc. and/or its affiliates.
 # SPDX-License-Identifier: MIT
 #
 #
@@ -54,16 +61,12 @@ Ahmed Body External Aerodynamics Simulation
 # Import required libraries/modules
 # =====================================================================================
 
+import os
 import platform
 
 import ansys.fluent.core as pyfluent
 from ansys.fluent.core import examples
-from ansys.fluent.visualization import Contour, GraphicsWindow, set_config
-
-#######################################################################################
-# Configure specific settings for this example
-# =====================================================================================
-set_config(blocking=True, set_view_on_display="isometric")
+from ansys.fluent.visualization import Contour, GraphicsWindow
 
 #######################################################################################
 # Launch Fluent session with meshing mode and print Fluent version
@@ -89,6 +92,7 @@ filenames = {
 geometry_filename = examples.download_file(
     filenames.get(platform.system(), filenames["Other"]),
     "pyfluent/examples/Ahmed-Body-Simulation",
+    save_path=os.getcwd(),
 )
 
 workflow.InitializeWorkflow(WorkflowType="Watertight Geometry")
@@ -305,8 +309,10 @@ session.settings.solution.report_definitions.drag["cd-mon1"] = {
     "zones": ["wall_ahmed_body_main", "wall_ahmed_body_front", "wall_ahmed_body_rear"],
     "force_vector": [0, 0, 1],
 }
-session.parameters.output_parameters.report_definitions.create(name="parameter-1")
-session.parameters.output_parameters.report_definitions["parameter-1"] = {
+session.settings.parameters.output_parameters.report_definitions.create(
+    name="parameter-1"
+)
+session.settings.parameters.output_parameters.report_definitions["parameter-1"] = {
     "report_definition": "cd-mon1"
 }
 
@@ -325,18 +331,17 @@ session.settings.solution.run_calculation.iterate(iter_count=5)
 #######################################################################################
 # Post-Processing Workflow
 # =====================================================================================
-session.results.surfaces.iso_surface.create(name="xmid")
-session.results.surfaces.iso_surface["xmid"].field = "x-coordinate"
-session.results.surfaces.iso_surface["xmid"] = {"iso_values": [0]}
+session.settings.results.surfaces.iso_surface.create(name="xmid")
+session.settings.results.surfaces.iso_surface["xmid"].field = "x-coordinate"
+session.settings.results.surfaces.iso_surface["xmid"] = {"iso_values": [0]}
 
 contour1 = Contour(solver=session, field="velocity-magnitude", surfaces=["xmid"])
 disp1 = GraphicsWindow()
 disp1.add_graphics(contour1)
 disp1.show()
 
-contour2 = Contour(solver=session, surfaces=["xmid"])
-contour2.field.allowed_values
-contour2.field = "pressure-coefficient"
+contour2 = Contour(solver=session, field="pressure-coefficient", surfaces=["xmid"])
+assert "pressure-coefficient" in contour2.field.allowed_values
 disp2 = GraphicsWindow()
 disp2.add_graphics(contour2)
 disp2.show()
