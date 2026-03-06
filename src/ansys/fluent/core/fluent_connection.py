@@ -327,12 +327,15 @@ def _get_channel(
                 grpc_options=options,
             )
         else:
+            # WNUA is Windows-only. Use insecure local gRPC on non-Windows.
+            transport_mode = "wnua" if platform.system() == "Windows" else "insecure"
             return create_channel(
-                transport_mode="wnua",
+                transport_mode=transport_mode,
                 host=ip,
                 port=port,
                 grpc_options=options,
             )
+
 
 
 class _ConnectionInterface:

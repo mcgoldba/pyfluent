@@ -2114,9 +2114,48 @@ class AllowedValuesMixin:
     def allowed_values(self):
         """Get the allowed values of the object."""
         try:
-            return self.get_attr(_InlineConstants.allowed_values, (list, str))
+            allowed = self.get_attr(_InlineConstants.allowed_values, (list, str))
+            return self._extend_allowed_values_for_calculate_patch(allowed)
         except Exception:
             return []
+
+    def _extend_allowed_values_for_calculate_patch(self, allowed):
+        """Extend patch variable names for VOF models when Fluent omits aliases."""
+        if not isinstance(allowed, list):
+            return allowed
+
+        if self.path != "solution/initialization/patch/calculate-patch/variable":
+            return allowed
+
+        try:
+            model = self.flproxy.get_var("setup/models/multiphase/models")
+        except Exception:
+            return allowed
+
+        if model != "vof":
+            return allowed
+
+        extended = list(allowed)
+        if "mp" not in extended:
+            extended.append("mp")
+
+        # Add secondary phase fraction names derived from configured phases.
+        try:
+            phase_names = self.flproxy.get_object_names("setup/phases")
+        except Exception:
+            phase_names = []
+
+        for i in range(2, len(phase_names) + 1):
+            phase_fraction_name = f"phase-{i}-volume-fraction"
+            if phase_fraction_name not in extended:
+                extended.append(phase_fraction_name)
+
+        if len(phase_names) < 2 and "phase-2-volume-fraction" not in extended:
+            # Conservative fallback for two-phase VOF setups where phase objects are
+            # not yet discoverable at this point.
+            extended.append("phase-2-volume-fraction")
+
+        return extended
 
 
 class _MaybeActiveString(str):
